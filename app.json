@@ -38,8 +38,7 @@
         }
       ],
       "expo-font",
-      "expo-web-browser",
-      "expo-haptics"
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true,
