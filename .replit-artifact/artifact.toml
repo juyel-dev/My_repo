@@ -1,0 +1,27 @@
+kind = "mobile"
+previewPath = "/neuralkey/"
+title = "NeuralKey"
+version = "1.0.0"
+id = "artifacts/neuralkey"
+router = "expo-domain"
+
+[[integratedSkills]]
+name = "expo"
+version = "1.0.0"
+
+[[services]]
+ensurePreviewReachable = "/status"
+name = "expo"
+paths = [ "/neuralkey/" ]
+localPort = 22955
+
+[services.development]
+run = "pnpm --filter @workspace/neuralkey run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/neuralkey", "run", "build" ]
+run = [ "pnpm", "--filter", "@workspace/neuralkey", "run", "serve" ]
+
+[services.env]
+PORT = "22955"
+BASE_PATH = "/neuralkey/"
