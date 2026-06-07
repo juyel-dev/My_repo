@@ -33,11 +33,23 @@ jobs:
         env:
           EXPO_NO_DOTENV: '1'
 
+      - name: Patch gradle.properties for Node path
+        run: |
+          echo "" >> android/gradle.properties
+          echo "NODE_BINARY=$(which node)" >> android/gradle.properties
+          echo "hermesEnabled=true" >> android/gradle.properties
+          echo "org.gradle.configureondemand=false" >> android/gradle.properties
+          echo "org.gradle.configuration-cache=false" >> android/gradle.properties
+
       - name: Build Debug APK
         run: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon -Dorg.gradle.jvmargs=-Xmx4g
+          ./gradlew assembleDebug \
+            --no-daemon \
+            --no-configuration-cache \
+            -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=512m" \
+            -Dorg.gradle.warning.mode=none
 
       - name: Find and rename APK
         id: apk
