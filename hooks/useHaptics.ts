@@ -1,25 +1,29 @@
 import * as Haptics from 'expo-haptics';
-import { useCallback } from 'react';
-import { useApp } from '@/context/AppContext';
+import { Platform } from 'react-native';
+
+const isNative = Platform.OS === 'ios' || Platform.OS === 'android';
 
 export function useHaptics() {
-  const { state } = useApp();
-  const enabled = state.settings.hapticFeedback;
+  const impact = (style: Haptics.ImpactFeedbackStyle = Haptics.ImpactFeedbackStyle.Medium) => {
+    if (!isNative) return;
+    Haptics.impactAsync(style).catch(() => {});
+  };
 
-  const impact = useCallback((style: Haptics.ImpactFeedbackStyle = Haptics.ImpactFeedbackStyle.Light) => {
-    if (!enabled) return;
-    Haptics.impactAsync(style);
-  }, [enabled]);
+  const notification = (type: Haptics.NotificationFeedbackType = Haptics.NotificationFeedbackType.Success) => {
+    if (!isNative) return;
+    Haptics.notificationAsync(type).catch(() => {});
+  };
 
-  const notification = useCallback((type: Haptics.NotificationFeedbackType = Haptics.NotificationFeedbackType.Success) => {
-    if (!enabled) return;
-    Haptics.notificationAsync(type);
-  }, [enabled]);
+  const light = () => impact(Haptics.ImpactFeedbackStyle.Light);
+  const medium = () => impact(Haptics.ImpactFeedbackStyle.Medium);
+  const heavy = () => impact(Haptics.ImpactFeedbackStyle.Heavy);
+  const success = () => notification(Haptics.NotificationFeedbackType.Success);
+  const warning = () => notification(Haptics.NotificationFeedbackType.Warning);
+  const error = () => notification(Haptics.NotificationFeedbackType.Error);
+  const selection = () => {
+    if (!isNative) return;
+    Haptics.selectionAsync().catch(() => {});
+  };
 
-  const selection = useCallback(() => {
-    if (!enabled) return;
-    Haptics.selectionAsync();
-  }, [enabled]);
-
-  return { impact, notification, selection };
+  return { impact, notification, light, medium, heavy, success, warning, error, selection };
 }

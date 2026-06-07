@@ -1,350 +1,215 @@
+import { Feather } from '@expo/vector-icons';
+import { router, useLocalSearchParams } from 'expo-router';
 import React, { useState } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, ScrollView, TextInput, Platform, Alert,
+  Alert, KeyboardAvoidingView, Platform, Pressable,
+  ScrollView, StyleSheet, Switch, Text, TextInput, View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useLocalSearchParams, router } from 'expo-router';
-import { Feather } from '@expo/vector-icons';
 import { useApp } from '@/context/AppContext';
-import { MONO_FONT } from '@/constants/colors';
-import { CAP_ICONS, CAP_COLORS, CAP_LABELS } from '@/constants/agentConfig';
-import type { AgentIcon, Capability } from '@/types';
+import { useColors } from '@/hooks/useColors';
+import { useHaptics } from '@/hooks/useHaptics';
+import { CAP_LABELS } from '@/constants/agentConfig';
+import type { Capability } from '@/types';
 
-const ICONS: { key: AgentIcon; icon: keyof typeof Feather.glyphMap }[] = [
-  { key: 'bot', icon: 'cpu' },
-  { key: 'code', icon: 'code' },
-  { key: 'globe', icon: 'globe' },
-  { key: 'cpu', icon: 'zap' },
-  { key: 'flask', icon: 'activity' },
-  { key: 'brain', icon: 'eye' },
-];
+const ALL_CAPS: Capability[] = ['tools', 'memory', 'vision', 'mcp', 'reasoning'];
 
-const CAPS: Capability[] = ['tools', 'memory', 'vision', 'mcp', 'reasoning'];
-
-const DEFAULT_NEW_AGENT = {
-  name: '',
-  description: '',
-  icon: 'bot' as AgentIcon,
-  modelId: '',
-  systemPrompt: 'You are a helpful AI assistant.',
-  capabilities: ['tools', 'memory'] as Capability[],
-  mcpServerIds: [] as string[],
-  temperature: 0.7,
-  maxTokens: 4096,
-  enabled: true,
-};
-
-export default function AgentEditScreen() {
+export default function EditAgentScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const insets = useSafeAreaInsets();
-  const { state, addAgent, updateAgent, deleteAgent } = useApp();
-  const topPad = Platform.OS === 'web' ? 67 : insets.top;
+  const colors = useColors();
+  const haptics = useHaptics();
+  const { state, updateAgent, deleteAgent } = useApp();
+  const top = Platform.OS === 'web' ? 67 : insets.top;
+  const bottom = Platform.OS === 'web' ? 34 : insets.bottom;
 
-  const isNew = id === 'new';
-  const existing = isNew ? null : state.agents.find(a => a.id === id);
+  const agent = state.agents.find(a => a.id === id);
+  const [name, setName] = useState(agent?.name ?? '');
+  const [desc, setDesc] = useState(agent?.description ?? '');
+  const [prompt, setPrompt] = useState(agent?.systemPrompt ?? '');
+  const [temperature, setTemperature] = useState(String(agent?.temperature ?? 0.7));
+  const [maxTokens, setMaxTokens] = useState(String(agent?.maxTokens ?? 4096));
+  const [caps, setCaps] = useState<Capability[]>(agent?.capabilities ?? []);
+  const [selectedModel, setSelectedModel] = useState(agent?.modelId ?? '');
 
-  const init = existing ?? DEFAULT_NEW_AGENT;
-  const [name, setName] = useState(init.name);
-  const [desc, setDesc] = useState(init.description);
-  const [icon, setIcon] = useState<AgentIcon>(init.icon);
-  const [modelId, setModelId] = useState(init.modelId);
-  const [systemPrompt, setSystemPrompt] = useState(init.systemPrompt);
-  const [caps, setCaps] = useState<Capability[]>(init.capabilities);
-  const [temperature, setTemperature] = useState(init.temperature.toString());
-  const [maxTokens, setMaxTokens] = useState(init.maxTokens.toString());
-  const [saving, setSaving] = useState(false);
+  if (!agent) return <View style={{ flex: 1, backgroundColor: colors.background }} />;
 
+  const isDefault = id === 'default-assistant';
   const enabledModels = state.models.filter(m => m.enabled);
 
   const toggleCap = (cap: Capability) => {
+    haptics.selection();
     setCaps(prev => prev.includes(cap) ? prev.filter(c => c !== cap) : [...prev, cap]);
   };
 
   const handleSave = async () => {
-    if (!name.trim()) { Alert.alert('Error', 'Agent name is required.'); return; }
-    setSaving(true);
-    try {
-      const temp = parseFloat(temperature);
-      const tokens = parseInt(maxTokens);
-      const data = {
-        name: name.trim(),
-        description: desc.trim(),
-        icon,
-        modelId,
-        systemPrompt: systemPrompt.trim(),
-        capabilities: caps,
-        mcpServerIds: existing?.mcpServerIds ?? [],
-        temperature: isNaN(temp) ? 0.7 : Math.max(0, Math.min(2, temp)),
-        maxTokens: isNaN(tokens) ? 4096 : Math.max(256, tokens),
-        enabled: existing?.enabled ?? true,
-      };
-      if (isNew) {
-        await addAgent(data);
-      } else {
-        await updateAgent(id, data);
-      }
-      router.back();
-    } catch (e) {
-      Alert.alert('Error', String(e));
-    } finally {
-      setSaving(false);
-    }
+    haptics.medium();
+    await updateAgent(id, {
+      name: name.trim() || agent.name,
+      description: desc.trim(),
+      systemPrompt: prompt.trim(),
+      temperature: Math.min(2, Math.max(0, parseFloat(temperature) || 0.7)),
+      maxTokens: Math.min(200_000, Math.max(256, parseInt(maxTokens) || 4096)),
+      capabilities: caps,
+      modelId: selectedModel,
+    });
+    haptics.success();
+    router.back();
   };
 
   const handleDelete = () => {
-    if (!existing || id === 'default-assistant') {
-      Alert.alert('Cannot Delete', 'The default assistant cannot be deleted.');
-      return;
-    }
-    Alert.alert('Delete Agent', `Remove "${existing.name}"?`, [
+    if (isDefault) return;
+    Alert.alert('Delete Agent', `Delete "${agent.name}"?`, [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: async () => { await deleteAgent(id); router.back(); } },
+      { text: 'Delete', style: 'destructive', onPress: async () => { haptics.error(); await deleteAgent(id); router.back(); } },
     ]);
   };
 
   return (
-    <View style={[styles.container, { paddingTop: topPad, paddingBottom: insets.bottom }]}>
-      <View style={styles.topBar}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} hitSlop={8}>
-          <Feather name="arrow-left" size={18} color="#a1a1a1" />
-        </TouchableOpacity>
-        <Text style={styles.title}>{isNew ? 'New Agent' : 'Edit Agent'}</Text>
-        <TouchableOpacity onPress={handleSave} disabled={saving} style={styles.saveBtn} activeOpacity={0.8}>
-          <Text style={styles.saveBtnText}>{saving ? '...' : 'Save'}</Text>
-        </TouchableOpacity>
-      </View>
-
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-        {/* Icon & Name */}
-        <View style={styles.card}>
-          <Text style={styles.cardLabel}>{'// BASIC'}</Text>
-          <Text style={styles.fieldLabel}>AVATAR / ICON</Text>
-          <View style={styles.iconRow}>
-            {ICONS.map(i => (
-              <TouchableOpacity
-                key={i.key}
-                style={[styles.iconOption, icon === i.key && styles.iconOptionActive]}
-                onPress={() => setIcon(i.key)}
-              >
-                <Feather name={i.icon} size={16} color={icon === i.key ? '#8b5cf6' : '#737373'} />
-              </TouchableOpacity>
-            ))}
-          </View>
-          <Text style={styles.fieldLabel}>AGENT NAME</Text>
-          <View style={styles.inputRow}>
-            <TextInput
-              style={styles.input}
-              value={name}
-              onChangeText={setName}
-              placeholder="e.g. ResearchBot"
-              placeholderTextColor="#525252"
-              autoCapitalize="words"
-            />
-          </View>
-          <Text style={styles.fieldLabel}>DESCRIPTION</Text>
-          <View style={styles.inputRow}>
-            <TextInput
-              style={styles.input}
-              value={desc}
-              onChangeText={setDesc}
-              placeholder="// brief description of this agent"
-              placeholderTextColor="#525252"
-              multiline
-              numberOfLines={2}
-            />
-          </View>
-        </View>
-
-        {/* Model */}
-        <View style={styles.card}>
-          <Text style={styles.cardLabel}>{'// MODEL'}</Text>
-          {enabledModels.length === 0 ? (
-            <View style={styles.noModelRow}>
-              <Text style={styles.noModels}>// No models enabled.</Text>
-              <TouchableOpacity onPress={() => router.push('/settings/providers/')}>
-                <Text style={styles.noModelsLink}>Add a provider →</Text>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.modelScroll}>
-              {enabledModels.map(m => {
-                const provider = state.providers.find(p => p.id === m.providerId);
-                return (
-                  <TouchableOpacity
-                    key={m.id}
-                    style={[styles.modelChip, modelId === m.id && styles.modelChipActive]}
-                    onPress={() => setModelId(m.id)}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={[styles.modelChipText, modelId === m.id && styles.modelChipTextActive]}>{m.name}</Text>
-                    <Text style={styles.modelProvider}>{provider?.name ?? ''}</Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <View style={[styles.container, { backgroundColor: colors.background, paddingTop: top }]}>
+        <View style={[styles.header, { borderBottomColor: colors.border }]}>
+          <Pressable onPress={() => router.back()} hitSlop={12}>
+            <Feather name="arrow-left" size={22} color={colors.textMuted} />
+          </Pressable>
+          <Text style={[styles.title, { color: colors.text }]}>{agent.name}</Text>
+          {!isDefault && (
+            <Pressable onPress={handleDelete} hitSlop={12}>
+              <Feather name="trash-2" size={18} color={colors.destructive} />
+            </Pressable>
           )}
+          {isDefault && <View style={{ width: 22 }} />}
         </View>
 
-        {/* Capabilities */}
-        <View style={styles.card}>
-          <Text style={styles.cardLabel}>{'// CAPABILITIES'}</Text>
+        <ScrollView contentContainerStyle={[styles.content, { paddingBottom: bottom + 20 }]} keyboardShouldPersistTaps="handled">
+          <Text style={[styles.label, { color: colors.textDim }]}>NAME</Text>
+          <TextInput style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]} value={name} onChangeText={setName} />
+
+          <Text style={[styles.label, { color: colors.textDim }]}>DESCRIPTION</Text>
+          <TextInput style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]} value={desc} onChangeText={setDesc} />
+
+          <Text style={[styles.label, { color: colors.textDim }]}>MODEL</Text>
+          {enabledModels.length === 0 ? (
+            <Pressable onPress={() => router.push('/settings/providers/index')} style={[styles.emptyModel, { backgroundColor: colors.primaryMuted, borderColor: colors.primaryBorder }]}>
+              <Text style={[styles.emptyModelText, { color: colors.primary }]}>+ Add a provider to select a model</Text>
+            </Pressable>
+          ) : (
+            <View style={styles.modelList}>
+              {enabledModels.map(m => (
+                <Pressable
+                  key={m.id}
+                  onPress={() => { haptics.selection(); setSelectedModel(m.id); }}
+                  style={({ pressed }) => [
+                    styles.modelChip,
+                    {
+                      backgroundColor: selectedModel === m.id ? colors.primaryMuted : colors.card,
+                      borderColor: selectedModel === m.id ? colors.primary : colors.border,
+                      opacity: pressed ? 0.8 : 1,
+                    },
+                  ]}
+                >
+                  <Text style={[styles.modelChipText, { color: selectedModel === m.id ? colors.primary : colors.textMuted }]}>
+                    {m.name}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          )}
+
+          <Text style={[styles.label, { color: colors.textDim }]}>SYSTEM PROMPT</Text>
+          <TextInput
+            style={[styles.promptInput, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
+            value={prompt}
+            onChangeText={setPrompt}
+            multiline
+            textAlignVertical="top"
+            placeholder="You are a helpful assistant…"
+            placeholderTextColor={colors.textFaint}
+          />
+
+          <Text style={[styles.label, { color: colors.textDim }]}>CAPABILITIES</Text>
           <View style={styles.capsGrid}>
-            {CAPS.map(cap => (
-              <TouchableOpacity
+            {ALL_CAPS.map(cap => (
+              <Pressable
                 key={cap}
-                style={[
-                  styles.capOption,
-                  caps.includes(cap) && { backgroundColor: `${CAP_COLORS[cap]}20`, borderColor: `${CAP_COLORS[cap]}60` },
-                ]}
                 onPress={() => toggleCap(cap)}
-                activeOpacity={0.7}
+                style={({ pressed }) => [
+                  styles.capChip,
+                  {
+                    backgroundColor: caps.includes(cap) ? colors.primaryMuted : colors.card,
+                    borderColor: caps.includes(cap) ? colors.primary : colors.border,
+                    opacity: pressed ? 0.8 : 1,
+                  },
+                ]}
               >
-                <Feather name={CAP_ICONS[cap]} size={12} color={caps.includes(cap) ? CAP_COLORS[cap] : '#737373'} />
-                <Text style={[styles.capOptionText, caps.includes(cap) && { color: CAP_COLORS[cap] }]}>
+                <Text style={[styles.capText, { color: caps.includes(cap) ? colors.primary : colors.textMuted }]}>
                   {CAP_LABELS[cap]}
                 </Text>
-                {caps.includes(cap) && <Feather name="check" size={10} color={CAP_COLORS[cap]} />}
-              </TouchableOpacity>
+              </Pressable>
             ))}
           </View>
-        </View>
 
-        {/* System Prompt */}
-        <View style={styles.card}>
-          <Text style={styles.cardLabel}>{'// SYSTEM PROMPT'}</Text>
-          <View style={styles.promptBox}>
-            <TextInput
-              style={styles.promptInput}
-              value={systemPrompt}
-              onChangeText={setSystemPrompt}
-              multiline
-              numberOfLines={4}
-              placeholder="// system instructions..."
-              placeholderTextColor="#525252"
-            />
-          </View>
-        </View>
-
-        {/* Parameters */}
-        <View style={styles.card}>
-          <Text style={styles.cardLabel}>{'// PARAMETERS'}</Text>
           <View style={styles.paramRow}>
-            <View style={styles.paramLeft}>
-              <Text style={styles.paramLabel}>Temperature</Text>
-              <Text style={styles.paramHint}>// creativity 0.0 – 2.0</Text>
-            </View>
-            <View style={styles.paramInput}>
+            <View style={styles.paramField}>
+              <Text style={[styles.label, { color: colors.textDim }]}>TEMPERATURE</Text>
               <TextInput
-                style={styles.paramValue}
+                style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
                 value={temperature}
                 onChangeText={setTemperature}
                 keyboardType="decimal-pad"
               />
             </View>
-          </View>
-          <View style={styles.divider} />
-          <View style={styles.paramRow}>
-            <View style={styles.paramLeft}>
-              <Text style={styles.paramLabel}>Max Tokens</Text>
-              <Text style={styles.paramHint}>// response length limit</Text>
-            </View>
-            <View style={styles.paramInput}>
+            <View style={styles.paramField}>
+              <Text style={[styles.label, { color: colors.textDim }]}>MAX TOKENS</Text>
               <TextInput
-                style={styles.paramValue}
+                style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
                 value={maxTokens}
                 onChangeText={setMaxTokens}
                 keyboardType="number-pad"
               />
             </View>
           </View>
-        </View>
 
-        {!isNew && id !== 'default-assistant' && (
-          <TouchableOpacity style={styles.deleteBtn} onPress={handleDelete} activeOpacity={0.8}>
-            <Feather name="trash-2" size={14} color="#ef4444" />
-            <Text style={styles.deleteBtnText}>Delete Agent</Text>
-          </TouchableOpacity>
-        )}
-      </ScrollView>
-    </View>
+          <Pressable
+            onPress={handleSave}
+            style={({ pressed }) => [
+              styles.saveBtn,
+              { backgroundColor: colors.primary, opacity: pressed ? 0.7 : 1, marginTop: 20 },
+            ]}
+          >
+            <Text style={styles.saveBtnText}>Save Agent</Text>
+          </Pressable>
+        </ScrollView>
+      </View>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0d0d0d' },
-  topBar: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    paddingHorizontal: 16, paddingVertical: 12,
-    borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.08)',
-  },
-  backBtn: {
-    width: 32, height: 32, borderRadius: 16,
-    backgroundColor: '#171717', justifyContent: 'center', alignItems: 'center',
-  },
-  title: { flex: 1, fontFamily: MONO_FONT, color: '#f5f5f5', fontSize: 14, fontWeight: '700', textAlign: 'center' },
-  saveBtn: {
-    paddingHorizontal: 14, paddingVertical: 6, borderRadius: 8,
-    backgroundColor: 'rgba(139,92,246,0.2)', borderWidth: 1, borderColor: 'rgba(139,92,246,0.4)',
-  },
-  saveBtnText: { fontFamily: MONO_FONT, color: '#8b5cf6', fontSize: 12 },
-  scroll: { flex: 1 },
-  content: { padding: 16, gap: 14, paddingBottom: 32 },
-  card: {
-    backgroundColor: '#171717', borderRadius: 14, borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)', padding: 14, gap: 10,
-  },
-  cardLabel: { fontFamily: MONO_FONT, color: '#8b5cf6', fontSize: 10, letterSpacing: 2 },
-  fieldLabel: { fontFamily: MONO_FONT, color: '#737373', fontSize: 9, letterSpacing: 1, textTransform: 'uppercase' },
-  iconRow: { flexDirection: 'row', gap: 8 },
-  iconOption: {
-    width: 36, height: 36, borderRadius: 10, justifyContent: 'center', alignItems: 'center',
-    backgroundColor: '#262626', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
-  },
-  iconOptionActive: { backgroundColor: 'rgba(139,92,246,0.15)', borderColor: 'rgba(139,92,246,0.5)' },
-  inputRow: {
-    backgroundColor: '#0d0d0d', borderRadius: 10,
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)', paddingHorizontal: 12, paddingVertical: 10,
-  },
-  input: { fontFamily: MONO_FONT, color: '#f5f5f5', fontSize: 13 },
-  noModelRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  noModels: { fontFamily: MONO_FONT, color: '#525252', fontSize: 11 },
-  noModelsLink: { fontFamily: MONO_FONT, color: '#8b5cf6', fontSize: 11 },
-  modelScroll: { marginHorizontal: -4 },
-  modelChip: {
-    paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, marginHorizontal: 4,
-    backgroundColor: '#262626', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
+  container: { flex: 1 },
+  header: {
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
   },
-  modelChipActive: { backgroundColor: 'rgba(139,92,246,0.15)', borderColor: 'rgba(139,92,246,0.5)' },
-  modelChipText: { fontFamily: MONO_FONT, color: '#737373', fontSize: 12 },
-  modelChipTextActive: { color: '#8b5cf6' },
-  modelProvider: { fontFamily: MONO_FONT, color: '#404040', fontSize: 9, marginTop: 2 },
+  title: { fontSize: 16, fontFamily: 'Inter_600SemiBold', flex: 1, textAlign: 'center' },
+  content: { padding: 20, gap: 10 },
+  label: { fontSize: 11, fontFamily: 'Inter_600SemiBold', letterSpacing: 0.8, marginTop: 8, marginBottom: 2 },
+  input: { height: 48, borderRadius: 12, borderWidth: 1, paddingHorizontal: 14, fontSize: 15, fontFamily: 'Inter_400Regular' },
+  promptInput: { minHeight: 120, borderRadius: 12, borderWidth: 1, paddingHorizontal: 14, paddingTop: 12, fontSize: 14, fontFamily: 'Inter_400Regular', lineHeight: 20 },
+  modelList: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  modelChip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, borderWidth: 1 },
+  modelChipText: { fontSize: 13, fontFamily: 'Inter_500Medium' },
+  emptyModel: { paddingHorizontal: 14, paddingVertical: 12, borderRadius: 12, borderWidth: 1, alignItems: 'center' },
+  emptyModelText: { fontSize: 14, fontFamily: 'Inter_500Medium' },
   capsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  capOption: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    paddingHorizontal: 10, paddingVertical: 7, borderRadius: 8,
-    backgroundColor: '#262626', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
-  },
-  capOptionText: { fontFamily: MONO_FONT, color: '#737373', fontSize: 11 },
-  promptBox: {
-    backgroundColor: '#0d0d0d', borderRadius: 10,
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)', padding: 12,
-  },
-  promptInput: { fontFamily: MONO_FONT, color: '#f5f5f5', fontSize: 12, lineHeight: 18, minHeight: 80 },
-  paramRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  paramLeft: { flex: 1, gap: 2 },
-  paramLabel: { fontFamily: MONO_FONT, color: '#a1a1a1', fontSize: 13 },
-  paramHint: { fontFamily: MONO_FONT, color: '#525252', fontSize: 9 },
-  paramInput: {
-    backgroundColor: '#0d0d0d', borderRadius: 8,
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)', paddingHorizontal: 12, paddingVertical: 6,
-  },
-  paramValue: { fontFamily: MONO_FONT, color: '#f5f5f5', fontSize: 13, minWidth: 60, textAlign: 'center' },
-  divider: { height: 1, backgroundColor: 'rgba(255,255,255,0.06)' },
-  deleteBtn: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
-    padding: 14, borderRadius: 12,
-    backgroundColor: 'rgba(239,68,68,0.08)', borderWidth: 1, borderColor: 'rgba(239,68,68,0.25)',
-  },
-  deleteBtnText: { fontFamily: MONO_FONT, color: '#ef4444', fontSize: 13, fontWeight: '600' },
+  capChip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, borderWidth: 1 },
+  capText: { fontSize: 13, fontFamily: 'Inter_500Medium' },
+  paramRow: { flexDirection: 'row', gap: 12 },
+  paramField: { flex: 1 },
+  saveBtn: { height: 52, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  saveBtnText: { fontSize: 16, fontFamily: 'Inter_600SemiBold', color: '#fff' },
 });

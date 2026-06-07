@@ -1,244 +1,149 @@
+import { Feather } from '@expo/vector-icons';
+import { router, useLocalSearchParams } from 'expo-router';
 import React, { useState } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, ScrollView, TextInput, Platform, Alert,
+  Alert, KeyboardAvoidingView, Platform, Pressable,
+  ScrollView, StyleSheet, Text, TextInput, View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useLocalSearchParams, router } from 'expo-router';
-import { Feather } from '@expo/vector-icons';
 import { useApp } from '@/context/AppContext';
-import { MONO_FONT } from '@/constants/colors';
+import { useColors } from '@/hooks/useColors';
+import { useHaptics } from '@/hooks/useHaptics';
 import type { MCPTransport } from '@/types';
 
 const TRANSPORTS: MCPTransport[] = ['SSE', 'WebSocket', 'HTTP', 'STDIO'];
 
-const DEFAULT_MCP = {
-  name: '', transport: 'SSE' as MCPTransport, url: '', enabled: true,
-};
-
-export default function MCPEditScreen() {
+export default function EditMCPScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const insets = useSafeAreaInsets();
-  const { state, addMCPServer, updateMCPServer, deleteMCPServer } = useApp();
-  const topPad = Platform.OS === 'web' ? 67 : insets.top;
+  const colors = useColors();
+  const haptics = useHaptics();
+  const { state, updateMCPServer, deleteMCPServer } = useApp();
+  const top = Platform.OS === 'web' ? 67 : insets.top;
+  const bottom = Platform.OS === 'web' ? 34 : insets.bottom;
 
-  const isNew = id === 'add';
-  const existing = isNew ? null : state.mcpServers.find(s => s.id === id);
-  const init = existing ?? DEFAULT_MCP;
+  const server = state.mcpServers.find(s => s.id === id);
+  const [name, setName] = useState(server?.name ?? '');
+  const [url, setUrl] = useState(server?.url ?? '');
+  const [transport, setTransport] = useState<MCPTransport>(server?.transport ?? 'SSE');
 
-  const [name, setName] = useState(init.name);
-  const [transport, setTransport] = useState<MCPTransport>(init.transport);
-  const [url, setUrl] = useState(init.url);
-  const [enabled, setEnabled] = useState(init.enabled);
-  const [saving, setSaving] = useState(false);
+  if (!server) return <View style={{ flex: 1, backgroundColor: colors.background }} />;
 
   const handleSave = async () => {
-    if (!name.trim()) { Alert.alert('Error', 'Server name is required.'); return; }
-    if (!url.trim()) { Alert.alert('Error', 'URL is required.'); return; }
-    setSaving(true);
-    try {
-      if (isNew) {
-        await addMCPServer({ name: name.trim(), transport, url: url.trim(), enabled });
-      } else {
-        await updateMCPServer(id, { name: name.trim(), transport, url: url.trim(), enabled });
-      }
-      router.back();
-    } catch (e) {
-      Alert.alert('Error', String(e));
-    } finally {
-      setSaving(false);
+    if (!url.trim() && transport !== 'STDIO') {
+      Alert.alert('URL Required', 'Please enter a server URL.');
+      return;
     }
+    haptics.medium();
+    await updateMCPServer(id, { name: name.trim() || server.name, url: url.trim(), transport });
+    haptics.success();
+    router.back();
   };
 
   const handleDelete = () => {
-    Alert.alert('Delete MCP Server', `Remove "${existing?.name}"?`, [
+    Alert.alert('Delete MCP Server', `Delete "${server.name}"?`, [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: async () => { await deleteMCPServer(id); router.back(); } },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => { haptics.error(); await deleteMCPServer(id); router.back(); },
+      },
     ]);
   };
 
-  const urlPlaceholders: Record<MCPTransport, string> = {
-    SSE: 'https://mcp.example.com/sse',
-    WebSocket: 'wss://api.example.com/mcp',
-    HTTP: 'https://mcp.example.com/api',
-    STDIO: '/usr/bin/mcp-server',
-  };
-
   return (
-    <View style={[styles.container, { paddingTop: topPad, paddingBottom: insets.bottom }]}>
-      <View style={styles.topBar}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} hitSlop={8}>
-          <Feather name="arrow-left" size={18} color="#a1a1a1" />
-        </TouchableOpacity>
-        <Text style={styles.title}>{isNew ? 'Add MCP Server' : 'Edit MCP Server'}</Text>
-        <TouchableOpacity onPress={handleSave} disabled={saving} style={styles.saveBtn} activeOpacity={0.8}>
-          <Text style={styles.saveBtnText}>{saving ? '...' : 'Save'}</Text>
-        </TouchableOpacity>
-      </View>
-
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-        {/* Basic */}
-        <View style={styles.card}>
-          <Text style={styles.cardLabel}>{'// BASIC'}</Text>
-          <View style={styles.rowItem}>
-            <Feather name="settings" size={13} color="#8b5cf6" />
-            <Text style={styles.rowLabel}>Enable this server</Text>
-            <TouchableOpacity onPress={() => setEnabled(v => !v)} hitSlop={8}>
-              <Feather name={enabled ? 'toggle-right' : 'toggle-left'} size={24} color={enabled ? '#8b5cf6' : '#525252'} />
-            </TouchableOpacity>
-          </View>
-          <View style={styles.divider} />
-          <View style={styles.field}>
-            <Text style={styles.fieldLabel}>SERVER NAME</Text>
-            <View style={styles.inputRow}>
-              <Feather name="server" size={13} color="#737373" />
-              <TextInput
-                style={styles.input}
-                value={name}
-                onChangeText={setName}
-                placeholder="e.g. filesystem-mcp"
-                placeholderTextColor="#525252"
-                autoCapitalize="none"
-              />
-            </View>
-          </View>
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <View style={[styles.container, { backgroundColor: colors.background, paddingTop: top }]}>
+        <View style={[styles.header, { borderBottomColor: colors.border }]}>
+          <Pressable onPress={() => router.back()} hitSlop={12}>
+            <Feather name="arrow-left" size={22} color={colors.textMuted} />
+          </Pressable>
+          <Text style={[styles.title, { color: colors.text }]}>MCP Server</Text>
+          <Pressable onPress={handleDelete} hitSlop={12}>
+            <Feather name="trash-2" size={18} color={colors.destructive} />
+          </Pressable>
         </View>
 
-        {/* Transport */}
-        <View style={styles.card}>
-          <Text style={styles.cardLabel}>{'// TRANSPORT TYPE'}</Text>
+        <ScrollView contentContainerStyle={[styles.content, { paddingBottom: bottom + 20 }]} keyboardShouldPersistTaps="handled">
+          <Text style={[styles.label, { color: colors.textDim }]}>NAME</Text>
+          <TextInput
+            style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
+            value={name}
+            onChangeText={setName}
+          />
+
+          <Text style={[styles.label, { color: colors.textDim }]}>TRANSPORT</Text>
           <View style={styles.transportGrid}>
             {TRANSPORTS.map(t => (
-              <TouchableOpacity
+              <Pressable
                 key={t}
-                style={[styles.transportOption, transport === t && styles.transportOptionActive]}
-                onPress={() => setTransport(t)}
-                activeOpacity={0.7}
+                onPress={() => { haptics.selection(); setTransport(t); }}
+                style={({ pressed }) => [
+                  styles.transportChip,
+                  {
+                    backgroundColor: transport === t ? colors.primaryMuted : colors.card,
+                    borderColor: transport === t ? colors.primary : colors.border,
+                    opacity: pressed ? 0.8 : 1,
+                  },
+                ]}
               >
-                <View style={[styles.transportDot, transport === t ? styles.transportDotActive : styles.transportDotInactive]} />
-                <Text style={[styles.transportText, transport === t && styles.transportTextActive]}>{t}</Text>
-              </TouchableOpacity>
+                <Text style={[styles.transportText, { color: transport === t ? colors.primary : colors.textMuted }]}>{t}</Text>
+              </Pressable>
             ))}
           </View>
-        </View>
 
-        {/* URL */}
-        <View style={styles.card}>
-          <Text style={styles.cardLabel}>{'// ENDPOINT / PATH'}</Text>
-          <View style={styles.inputRow}>
-            <Feather name="link" size={13} color="#737373" />
-            <TextInput
-              style={styles.input}
-              value={url}
-              onChangeText={setUrl}
-              placeholder={urlPlaceholders[transport]}
-              placeholderTextColor="#525252"
-              autoCapitalize="none"
-              autoCorrect={false}
-              keyboardType={transport === 'STDIO' ? 'default' : 'url'}
-            />
+          <Text style={[styles.label, { color: colors.textDim }]}>SERVER URL</Text>
+          <TextInput
+            style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
+            value={url}
+            onChangeText={setUrl}
+            placeholder="https://mcp.example.com/sse"
+            placeholderTextColor={colors.textFaint}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+
+          <View style={[styles.infoBox, { backgroundColor: colors.primaryMuted, borderColor: colors.primaryBorder }]}>
+            <Feather name="info" size={14} color={colors.primary} />
+            <Text style={[styles.infoText, { color: colors.textMuted }]}>
+              MCP servers extend your agents with tools like file access, web search, and database queries. The server must implement the Model Context Protocol specification.
+            </Text>
           </View>
-        </View>
 
-        {/* Authentication */}
-        <View style={styles.card}>
-          <Text style={styles.cardLabel}>{'// AUTHENTICATION (OPTIONAL)'}</Text>
-          <View style={styles.inputRow}>
-            <Feather name="key" size={13} color="#737373" />
-            <TextInput
-              style={styles.input}
-              placeholder="Bearer token or API key..."
-              placeholderTextColor="#525252"
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-          </View>
-          <Text style={styles.hint}>// leave blank for unauthenticated connections</Text>
-        </View>
-
-        {/* Actions */}
-        <View style={styles.actionsRow}>
-          <TouchableOpacity style={styles.testBtn} activeOpacity={0.8}>
-            <Feather name="zap" size={14} color="#737373" />
-            <Text style={styles.testBtnText}>Test Connection</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.saveFullBtn, saving && styles.saveBtnDisabled]} onPress={handleSave} disabled={saving} activeOpacity={0.8}>
-            <Feather name="check" size={14} color="#fff" />
-            <Text style={styles.saveFullBtnText}>{saving ? 'Saving...' : 'Save Server'}</Text>
-          </TouchableOpacity>
-        </View>
-
-        {!isNew && (
-          <TouchableOpacity style={styles.deleteBtn} onPress={handleDelete} activeOpacity={0.8}>
-            <Feather name="trash-2" size={14} color="#ef4444" />
-            <Text style={styles.deleteBtnText}>Delete Server</Text>
-          </TouchableOpacity>
-        )}
-      </ScrollView>
-    </View>
+          <Pressable
+            onPress={handleSave}
+            style={({ pressed }) => [
+              styles.saveBtn,
+              { backgroundColor: colors.primary, opacity: pressed ? 0.7 : 1, marginTop: 20 },
+            ]}
+          >
+            <Text style={styles.saveBtnText}>Save Server</Text>
+          </Pressable>
+        </ScrollView>
+      </View>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0d0d0d' },
-  topBar: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    paddingHorizontal: 16, paddingVertical: 12,
-    borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.08)',
+  container: { flex: 1 },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
   },
-  backBtn: {
-    width: 32, height: 32, borderRadius: 16,
-    backgroundColor: '#171717', justifyContent: 'center', alignItems: 'center',
-  },
-  title: { flex: 1, fontFamily: MONO_FONT, color: '#f5f5f5', fontSize: 14, fontWeight: '700', textAlign: 'center' },
-  saveBtn: {
-    paddingHorizontal: 14, paddingVertical: 6, borderRadius: 8,
-    backgroundColor: 'rgba(139,92,246,0.2)', borderWidth: 1, borderColor: 'rgba(139,92,246,0.4)',
-  },
-  saveBtnText: { fontFamily: MONO_FONT, color: '#8b5cf6', fontSize: 12 },
-  scroll: { flex: 1 },
-  content: { padding: 16, gap: 14, paddingBottom: 32 },
-  card: {
-    backgroundColor: '#171717', borderRadius: 14, borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)', overflow: 'hidden',
-  },
-  cardLabel: { fontFamily: MONO_FONT, color: '#8b5cf6', fontSize: 10, letterSpacing: 2, padding: 14, paddingBottom: 8 },
-  rowItem: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 12 },
-  rowLabel: { flex: 1, fontFamily: MONO_FONT, color: '#a1a1a1', fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.5 },
-  divider: { height: 1, backgroundColor: 'rgba(255,255,255,0.06)' },
-  field: { paddingHorizontal: 14, paddingBottom: 12, gap: 6 },
-  fieldLabel: { fontFamily: MONO_FONT, color: '#737373', fontSize: 9, letterSpacing: 1, textTransform: 'uppercase' },
-  inputRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 10 },
-  input: { flex: 1, fontFamily: MONO_FONT, color: '#f5f5f5', fontSize: 12 },
-  hint: { fontFamily: MONO_FONT, color: '#525252', fontSize: 10, paddingHorizontal: 14, paddingBottom: 10 },
-  transportGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, padding: 14, paddingTop: 0 },
-  transportOption: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8,
-    backgroundColor: '#1f1f1f', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
-  },
-  transportOptionActive: { backgroundColor: 'rgba(139,92,246,0.1)', borderColor: 'rgba(139,92,246,0.4)' },
-  transportDot: { width: 6, height: 6, borderRadius: 3 },
-  transportDotActive: { backgroundColor: '#8b5cf6' },
-  transportDotInactive: { backgroundColor: '#404040' },
-  transportText: { fontFamily: MONO_FONT, color: '#737373', fontSize: 12 },
-  transportTextActive: { color: '#f5f5f5' },
-  actionsRow: { flexDirection: 'row', gap: 10 },
-  testBtn: {
-    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
-    paddingVertical: 12, borderRadius: 12,
-    backgroundColor: '#171717', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
-  },
-  testBtnText: { fontFamily: MONO_FONT, color: '#737373', fontSize: 12 },
-  saveFullBtn: {
-    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
-    paddingVertical: 12, borderRadius: 12, backgroundColor: '#8b5cf6',
-  },
-  saveBtnDisabled: { opacity: 0.5 },
-  saveFullBtnText: { fontFamily: MONO_FONT, color: '#fff', fontSize: 12, fontWeight: '700' },
-  deleteBtn: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
-    padding: 14, borderRadius: 12,
-    backgroundColor: 'rgba(239,68,68,0.08)', borderWidth: 1, borderColor: 'rgba(239,68,68,0.25)',
-  },
-  deleteBtnText: { fontFamily: MONO_FONT, color: '#ef4444', fontSize: 13, fontWeight: '600' },
+  title: { fontSize: 16, fontFamily: 'Inter_600SemiBold' },
+  content: { padding: 20, gap: 10 },
+  label: { fontSize: 11, fontFamily: 'Inter_600SemiBold', letterSpacing: 0.8, marginTop: 8, marginBottom: 2 },
+  input: { height: 48, borderRadius: 12, borderWidth: 1, paddingHorizontal: 14, fontSize: 15, fontFamily: 'Inter_400Regular' },
+  transportGrid: { flexDirection: 'row', gap: 8 },
+  transportChip: { paddingHorizontal: 14, paddingVertical: 9, borderRadius: 10, borderWidth: 1 },
+  transportText: { fontSize: 13, fontFamily: 'Inter_500Medium' },
+  infoBox: { flexDirection: 'row', gap: 10, padding: 14, borderRadius: 12, borderWidth: 1, alignItems: 'flex-start' },
+  infoText: { flex: 1, fontSize: 13, fontFamily: 'Inter_400Regular', lineHeight: 19 },
+  saveBtn: { height: 52, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  saveBtnText: { fontSize: 16, fontFamily: 'Inter_600SemiBold', color: '#fff' },
 });

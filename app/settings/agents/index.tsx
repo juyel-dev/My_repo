@@ -1,152 +1,157 @@
+import { Feather } from '@expo/vector-icons';
+import { router } from 'expo-router';
 import React from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform, Alert,
+  Alert, FlatList, Platform, Pressable, StyleSheet, Switch, Text, View,
 } from 'react-native';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
-import { Feather } from '@expo/vector-icons';
 import { useApp } from '@/context/AppContext';
-import { MONO_FONT } from '@/constants/colors';
-import { AGENT_ICONS, CAP_ICONS, CAP_COLORS, CAP_LABELS } from '@/constants/agentConfig';
-import type { Capability } from '@/types';
+import { useColors } from '@/hooks/useColors';
+import { useHaptics } from '@/hooks/useHaptics';
+import { CapabilityChip } from '@/components/ui/CapabilityChip';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { AGENT_ICONS } from '@/constants/agentConfig';
+import type { Agent } from '@/types';
 
-export default function AgentsScreen() {
-  const insets = useSafeAreaInsets();
-  const { state, deleteAgent, toggleAgent } = useApp();
-  const topPad = Platform.OS === 'web' ? 67 : insets.top;
+function AgentRow({ item, index }: { item: Agent; index: number }) {
+  const colors = useColors();
+  const haptics = useHaptics();
+  const { toggleAgent, deleteAgent } = useApp();
+  const icon = AGENT_ICONS[item.icon] ?? 'cpu';
+  const isDefault = item.id === 'default-assistant';
 
-  const handleDelete = (id: string, name: string) => {
-    if (id === 'default-assistant') {
-      Alert.alert('Cannot Delete', 'The default assistant cannot be deleted.');
-      return;
-    }
-    Alert.alert('Delete Agent', `Remove "${name}"?`, [
+  const handleLongPress = () => {
+    if (isDefault) return;
+    haptics.medium();
+    Alert.alert('Delete Agent', `Delete "${item.name}"?`, [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: () => deleteAgent(id) },
+      { text: 'Delete', style: 'destructive', onPress: () => deleteAgent(item.id) },
     ]);
   };
 
   return (
-    <View style={[styles.container, { paddingTop: topPad, paddingBottom: insets.bottom }]}>
-      <View style={styles.topBar}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} hitSlop={8}>
-          <Feather name="arrow-left" size={18} color="#a1a1a1" />
-        </TouchableOpacity>
-        <Text style={styles.title}>Agent Settings</Text>
-        <TouchableOpacity onPress={() => router.push('/settings/agents/new')} style={styles.addBtn} activeOpacity={0.8}>
-          <Feather name="plus" size={16} color="#fff" />
-        </TouchableOpacity>
+    <Animated.View entering={Platform.OS !== 'web' ? FadeInDown.delay(index * 50).duration(300) : undefined}>
+      <Pressable
+        onPress={() => { haptics.light(); router.push(`/settings/agents/${item.id}`); }}
+        onLongPress={handleLongPress}
+        style={({ pressed }) => [
+          styles.row,
+          { backgroundColor: colors.card, borderColor: item.enabled ? colors.primaryBorder : colors.border, opacity: pressed ? 0.8 : 1 },
+        ]}
+      >
+        <View style={[styles.icon, { backgroundColor: colors.primaryMuted, borderColor: colors.primaryBorder }]}>
+          <Feather name={icon} size={18} color={colors.primary} />
+        </View>
+        <View style={styles.info}>
+          <View style={styles.nameRow}>
+            <Text style={[styles.name, { color: colors.text }]}>{item.name}</Text>
+            {isDefault && (
+              <View style={[styles.badge, { backgroundColor: colors.primaryMuted, borderColor: colors.primaryBorder }]}>
+                <Text style={[styles.badgeText, { color: colors.primary }]}>default</Text>
+              </View>
+            )}
+          </View>
+          <Text style={[styles.desc, { color: colors.textDim }]} numberOfLines={1}>{item.description}</Text>
+          <View style={styles.caps}>
+            {item.capabilities.slice(0, 3).map(c => <CapabilityChip key={c} capability={c} />)}
+          </View>
+        </View>
+        <Switch
+          value={item.enabled}
+          onValueChange={() => { haptics.selection(); toggleAgent(item.id); }}
+          trackColor={{ false: colors.chip, true: colors.primary }}
+          thumbColor="#fff"
+        />
+      </Pressable>
+    </Animated.View>
+  );
+}
+
+function genId() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 9);
+}
+
+export default function AgentsScreen() {
+  const insets = useSafeAreaInsets();
+  const colors = useColors();
+  const haptics = useHaptics();
+  const { state, addAgent } = useApp();
+  const top = Platform.OS === 'web' ? 67 : insets.top;
+  const bottom = Platform.OS === 'web' ? 34 : insets.bottom;
+
+  const handleAdd = async () => {
+    haptics.medium();
+    const agent = await addAgent({
+      name: 'New Agent',
+      description: 'Custom AI agent',
+      icon: 'bot',
+      modelId: state.models.find(m => m.enabled)?.id ?? '',
+      systemPrompt: 'You are a helpful AI assistant.',
+      capabilities: ['tools'],
+      mcpServerIds: [],
+      temperature: 0.7,
+      maxTokens: 4096,
+      enabled: true,
+    });
+    router.push(`/settings/agents/${agent.id}`);
+  };
+
+  return (
+    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: top }]}>
+      <View style={[styles.header, { borderBottomColor: colors.border }]}>
+        <Pressable onPress={() => router.back()} hitSlop={12}>
+          <Feather name="arrow-left" size={22} color={colors.textMuted} />
+        </Pressable>
+        <Text style={[styles.title, { color: colors.text }]}>Agents</Text>
+        <Pressable
+          onPress={handleAdd}
+          style={({ pressed }) => [
+            styles.addBtn,
+            { backgroundColor: colors.primary, opacity: pressed ? 0.8 : 1 },
+          ]}
+        >
+          <Feather name="plus" size={18} color="#fff" />
+        </Pressable>
       </View>
 
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <Text style={styles.sectionLabel}>{'// CONFIGURED AGENTS'}</Text>
-
-        {state.agents.map(agent => {
-          const model = state.models.find(m => m.id === agent.modelId);
-          return (
-            <View key={agent.id} style={[styles.card, !agent.enabled && styles.cardDisabled]}>
-              <View style={[styles.accent, agent.enabled && styles.accentActive]} />
-              <View style={styles.cardContent}>
-                <View style={styles.cardTop}>
-                  <View style={styles.iconBox}>
-                    <Feather name={AGENT_ICONS[agent.icon] ?? 'cpu'} size={16} color="#8b5cf6" />
-                  </View>
-                  <View style={styles.agentInfo}>
-                    <View style={styles.nameRow}>
-                      <Text style={styles.agentName}>{agent.name}</Text>
-                      <TouchableOpacity onPress={() => toggleAgent(agent.id)} hitSlop={8}>
-                        <Feather name={agent.enabled ? 'toggle-right' : 'toggle-left'} size={22} color={agent.enabled ? '#8b5cf6' : '#525252'} />
-                      </TouchableOpacity>
-                      <TouchableOpacity onPress={() => router.push(`/settings/agents/${agent.id}`)} hitSlop={8}>
-                        <Feather name="edit-2" size={14} color="#737373" />
-                      </TouchableOpacity>
-                      <TouchableOpacity onPress={() => handleDelete(agent.id, agent.name)} hitSlop={8}>
-                        <Feather name="trash-2" size={14} color="#ef4444" />
-                      </TouchableOpacity>
-                    </View>
-                    <Text style={styles.agentModel}>{model?.name ?? '// no model'}</Text>
-                  </View>
-                </View>
-                {agent.description ? (
-                  <Text style={styles.agentDesc} numberOfLines={1}>{agent.description}</Text>
-                ) : null}
-                <View style={styles.capRow}>
-                  {agent.capabilities.map(cap => (
-                    <View key={cap} style={[styles.capBadge, { backgroundColor: `${CAP_COLORS[cap as Capability]}20` }]}>
-                      <Feather name={CAP_ICONS[cap as Capability]} size={9} color={CAP_COLORS[cap as Capability]} />
-                      <Text style={[styles.capText, { color: CAP_COLORS[cap as Capability] }]}>
-                        {CAP_LABELS[cap as Capability]}
-                      </Text>
-                    </View>
-                  ))}
-                </View>
-              </View>
-            </View>
-          );
-        })}
-
-        <TouchableOpacity
-          style={styles.addMoreBtn}
-          onPress={() => router.push('/settings/agents/new')}
-          activeOpacity={0.8}
-        >
-          <Feather name="plus" size={14} color="#8b5cf6" />
-          <Text style={styles.addMoreText}>Create New Agent</Text>
-        </TouchableOpacity>
-      </ScrollView>
+      <FlatList
+        data={state.agents}
+        keyExtractor={item => item.id}
+        renderItem={({ item, index }) => <AgentRow item={item} index={index} />}
+        contentContainerStyle={[
+          styles.list,
+          { paddingBottom: bottom + 20 },
+          state.agents.length === 0 && { flex: 1 },
+        ]}
+        ListEmptyComponent={<EmptyState icon="user" title="No agents" subtitle="Create a custom AI agent" />}
+        showsVerticalScrollIndicator={false}
+        scrollEnabled={!!state.agents.length}
+      />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0d0d0d' },
-  topBar: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    paddingHorizontal: 16, paddingVertical: 12,
-    borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.08)',
+  container: { flex: 1 },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
   },
-  backBtn: {
-    width: 32, height: 32, borderRadius: 16,
-    backgroundColor: '#171717', justifyContent: 'center', alignItems: 'center',
-  },
-  title: { flex: 1, fontFamily: MONO_FONT, color: '#f5f5f5', fontSize: 14, fontWeight: '700', textAlign: 'center' },
-  addBtn: {
-    width: 32, height: 32, borderRadius: 16,
-    backgroundColor: '#8b5cf6', justifyContent: 'center', alignItems: 'center',
-  },
-  scroll: { flex: 1 },
-  content: { padding: 16, gap: 10, paddingBottom: 32 },
-  sectionLabel: { fontFamily: MONO_FONT, color: '#8b5cf6', fontSize: 10, letterSpacing: 2, marginBottom: 4 },
-  card: {
-    backgroundColor: '#171717', borderRadius: 14,
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
-    flexDirection: 'row', overflow: 'hidden',
-  },
-  cardDisabled: { opacity: 0.55 },
-  accent: { width: 3, backgroundColor: 'transparent' },
-  accentActive: { backgroundColor: '#8b5cf6' },
-  cardContent: { flex: 1, padding: 12, gap: 8 },
-  cardTop: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
-  iconBox: {
-    width: 32, height: 32, borderRadius: 10,
-    backgroundColor: 'rgba(139,92,246,0.15)', justifyContent: 'center', alignItems: 'center', flexShrink: 0,
-  },
-  agentInfo: { flex: 1 },
-  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  agentName: { flex: 1, fontFamily: MONO_FONT, color: '#f5f5f5', fontSize: 14, fontWeight: '700' },
-  agentModel: { fontFamily: MONO_FONT, color: '#737373', fontSize: 10, marginTop: 1 },
-  agentDesc: { fontFamily: MONO_FONT, color: '#525252', fontSize: 10, fontStyle: 'italic' },
-  capRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4 },
-  capBadge: {
-    flexDirection: 'row', alignItems: 'center', gap: 3,
-    paddingHorizontal: 7, paddingVertical: 3, borderRadius: 999,
-  },
-  capText: { fontFamily: MONO_FONT, fontSize: 9, letterSpacing: 0.5 },
-  addMoreBtn: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
-    paddingVertical: 14, borderRadius: 12,
-    borderWidth: 1, borderColor: 'rgba(139,92,246,0.2)', borderStyle: 'dashed',
-    marginTop: 4,
-  },
-  addMoreText: { fontFamily: MONO_FONT, color: '#8b5cf6', fontSize: 13 },
+  title: { fontSize: 16, fontFamily: 'Inter_600SemiBold', flex: 1, textAlign: 'center' },
+  addBtn: { width: 34, height: 34, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  list: { padding: 12, gap: 10 },
+  row: { borderRadius: 16, borderWidth: 1, padding: 14, gap: 12, flexDirection: 'row', alignItems: 'flex-start' },
+  icon: { width: 44, height: 44, borderRadius: 13, borderWidth: 1, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  info: { flex: 1, gap: 4 },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  name: { fontSize: 15, fontFamily: 'Inter_600SemiBold' },
+  badge: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6, borderWidth: 1 },
+  badgeText: { fontSize: 10, fontFamily: 'Inter_500Medium' },
+  desc: { fontSize: 13, fontFamily: 'Inter_400Regular' },
+  caps: { flexDirection: 'row', flexWrap: 'wrap', gap: 4 },
 });

@@ -1,181 +1,211 @@
+import { Feather } from '@expo/vector-icons';
+import { router } from 'expo-router';
 import React from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform,
+  Platform, Pressable, ScrollView, StyleSheet, Switch,
+  Text, View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
-import { Feather } from '@expo/vector-icons';
 import { useApp } from '@/context/AppContext';
-import { MONO_FONT } from '@/constants/colors';
+import { useColors } from '@/hooks/useColors';
+import { useHaptics } from '@/hooks/useHaptics';
 
-interface SettingsItemProps {
+interface RowProps {
   icon: keyof typeof Feather.glyphMap;
   label: string;
-  badge?: string | number;
-  badgeColor?: string;
-  onPress: () => void;
+  value?: string;
+  onPress?: () => void;
+  rightEl?: React.ReactNode;
   danger?: boolean;
 }
 
-function SettingsItem({ icon, label, badge, badgeColor = '#8b5cf6', onPress, danger }: SettingsItemProps) {
+function SettingsRow({ icon, label, value, onPress, rightEl, danger }: RowProps) {
+  const colors = useColors();
   return (
-    <TouchableOpacity style={styles.settingRow} onPress={onPress} activeOpacity={0.7}>
-      <View style={[styles.settingIcon, danger && styles.settingIconDanger]}>
-        <Feather name={icon} size={14} color={danger ? '#ef4444' : '#8b5cf6'} />
+    <Pressable
+      onPress={onPress}
+      disabled={!onPress && !rightEl}
+      style={({ pressed }) => [
+        styles.row,
+        { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.75 : 1 },
+      ]}
+    >
+      <View style={[
+        styles.rowIcon,
+        { backgroundColor: danger ? colors.destructiveMuted : colors.primaryMuted,
+          borderColor: danger ? colors.destructiveBorder : colors.primaryBorder },
+      ]}>
+        <Feather name={icon} size={15} color={danger ? colors.destructive : colors.primary} />
       </View>
-      <Text style={[styles.settingLabel, danger && styles.settingLabelDanger]}>{label}</Text>
-      <View style={styles.settingRight}>
-        {badge !== undefined && (
-          <View style={[styles.badge, { backgroundColor: `${badgeColor}20` }]}>
-            <Text style={[styles.badgeText, { color: badgeColor }]}>{badge}</Text>
-          </View>
-        )}
-        <Feather name="chevron-right" size={14} color="#525252" />
-      </View>
-    </TouchableOpacity>
+      <Text style={[styles.rowLabel, { color: danger ? colors.destructive : colors.text }]}>{label}</Text>
+      {rightEl ?? (
+        <View style={styles.rowRight}>
+          {value ? <Text style={[styles.rowValue, { color: colors.textDim }]}>{value}</Text> : null}
+          {onPress ? <Feather name="chevron-right" size={15} color={colors.textFaint} /> : null}
+        </View>
+      )}
+    </Pressable>
+  );
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  const colors = useColors();
+  return (
+    <View style={styles.section}>
+      <Text style={[styles.sectionTitle, { color: colors.textDim }]}>{title}</Text>
+      <View style={styles.sectionCards}>{children}</View>
+    </View>
   );
 }
 
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
-  const { state } = useApp();
-  const topPad = Platform.OS === 'web' ? 67 : insets.top;
-  const bottomPad = Platform.OS === 'web' ? 34 : insets.bottom;
+  const colors = useColors();
+  const haptics = useHaptics();
+  const { state, updateSettings } = useApp();
+  const { settings } = state;
 
-  const enabledProviders = state.providers.filter(p => p.enabled).length;
-  const enabledModels = state.models.filter(m => m.enabled).length;
-  const enabledAgents = state.agents.filter(a => a.enabled).length;
-  const connectedMCP = state.mcpServers.filter(s => s.status === 'connected').length;
+  const top = Platform.OS === 'web' ? 67 : insets.top;
+  const bottom = Platform.OS === 'web' ? 34 : insets.bottom;
+
+  const providersCount = state.providers.filter(p => p.enabled).length;
+  const modelsCount = state.models.filter(m => m.enabled).length;
+  const agentsCount = state.agents.filter(a => a.enabled).length;
+  const mcpCount = state.mcpServers.filter(s => s.enabled).length;
+
+  const toggle = (key: keyof typeof settings) => () => {
+    haptics.selection();
+    if (typeof settings[key] === 'boolean') {
+      updateSettings({ [key]: !settings[key] });
+    }
+  };
 
   return (
-    <View style={[styles.container, { paddingBottom: bottomPad }]}>
-      {/* Header */}
-      <View style={[styles.header, { paddingTop: topPad }]}>
-        <View style={styles.headerLeft}>
-          <Feather name="settings" size={14} color="#8b5cf6" />
-          <Text style={styles.headerTitle}>Settings</Text>
-        </View>
-        <Text style={styles.headerVersion}>v1.0.0</Text>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
+      <View style={[styles.header, { paddingTop: top }]}>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>Settings</Text>
       </View>
 
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={[styles.content, { paddingBottom: bottom + 90 }]}
+        showsVerticalScrollIndicator={false}
+      >
+        <Section title="AI PROVIDERS">
+          <SettingsRow
+            icon="key"
+            label="Providers"
+            value={`${providersCount} active`}
+            onPress={() => { haptics.light(); router.push('/settings/providers/index'); }}
+          />
+          <SettingsRow
+            icon="cpu"
+            label="Models"
+            value={`${modelsCount} enabled`}
+            onPress={() => { haptics.light(); router.push('/settings/models'); }}
+          />
+        </Section>
 
-        {/* API & Models */}
-        <View style={styles.section}>
-          <Text style={styles.sectionLabel}>{'// AI INFRASTRUCTURE'}</Text>
-          <View style={styles.card}>
-            <SettingsItem
-              icon="globe"
-              label="API Providers"
-              badge={enabledProviders > 0 ? enabledProviders : undefined}
-              onPress={() => router.push('/settings/providers/')}
-            />
-            <View style={styles.rowSep} />
-            <SettingsItem
-              icon="cpu"
-              label="Models"
-              badge={enabledModels > 0 ? enabledModels : undefined}
-              onPress={() => router.push('/settings/models')}
-            />
-          </View>
-        </View>
+        <Section title="AGENTS & TOOLS">
+          <SettingsRow
+            icon="user"
+            label="Agents"
+            value={`${agentsCount} active`}
+            onPress={() => { haptics.light(); router.push('/settings/agents/index'); }}
+          />
+          <SettingsRow
+            icon="server"
+            label="MCP Servers"
+            value={`${mcpCount} connected`}
+            onPress={() => { haptics.light(); router.push('/settings/mcp/index'); }}
+          />
+        </Section>
 
-        {/* Agents */}
-        <View style={styles.section}>
-          <Text style={styles.sectionLabel}>{'// AGENTS & TOOLS'}</Text>
-          <View style={styles.card}>
-            <SettingsItem
-              icon="user"
-              label="Agents"
-              badge={enabledAgents}
-              onPress={() => router.push('/settings/agents/')}
-            />
-            <View style={styles.rowSep} />
-            <SettingsItem
-              icon="server"
-              label="MCP Servers"
-              badge={connectedMCP > 0 ? `${connectedMCP} connected` : undefined}
-              badgeColor="#4ade80"
-              onPress={() => router.push('/settings/mcp/')}
-            />
-          </View>
-        </View>
+        <Section title="PREFERENCES">
+          <SettingsRow
+            icon="zap"
+            label="Streaming Responses"
+            rightEl={
+              <Switch
+                value={settings.streamingEnabled}
+                onValueChange={toggle('streamingEnabled')}
+                trackColor={{ false: colors.chip, true: colors.primary }}
+                thumbColor="#fff"
+              />
+            }
+          />
+          <SettingsRow
+            icon="database"
+            label="Persistent Memory"
+            onPress={() => { haptics.light(); router.push('/settings/memory'); }}
+            rightEl={
+              <View style={styles.rowRight}>
+                <Text style={[styles.rowValue, { color: settings.persistentMemory ? colors.primary : colors.textDim }]}>
+                  {settings.persistentMemory ? 'On' : 'Off'}
+                </Text>
+                <Feather name="chevron-right" size={15} color={colors.textFaint} />
+              </View>
+            }
+          />
+          <SettingsRow
+            icon="smartphone"
+            label="Haptic Feedback"
+            rightEl={
+              <Switch
+                value={settings.hapticFeedback}
+                onValueChange={toggle('hapticFeedback')}
+                trackColor={{ false: colors.chip, true: colors.primary }}
+                thumbColor="#fff"
+              />
+            }
+          />
+        </Section>
 
-        {/* Personalization */}
-        <View style={styles.section}>
-          <Text style={styles.sectionLabel}>{'// PERSONALIZATION'}</Text>
-          <View style={styles.card}>
-            <SettingsItem
-              icon="sliders"
-              label="Memory & Personalization"
-              onPress={() => router.push('/settings/memory')}
-            />
-          </View>
-        </View>
+        <Section title="DATA">
+          <SettingsRow
+            icon="alert-triangle"
+            label="Danger Zone"
+            onPress={() => { haptics.warning(); router.push('/settings/danger'); }}
+            danger
+          />
+        </Section>
 
-        {/* Danger */}
-        <View style={styles.section}>
-          <Text style={[styles.sectionLabel, { color: '#ef4444' }]}>{'// DANGER ZONE'}</Text>
-          <View style={[styles.card, styles.dangerCard]}>
-            <SettingsItem
-              icon="alert-triangle"
-              label="Danger Zone"
-              onPress={() => router.push('/settings/danger')}
-              danger
-            />
-          </View>
-        </View>
-
-        {/* Footer */}
-        <View style={styles.footer}>
-          <Text style={styles.footerText}>{'// NeuralKey v1.0.0 · all data stored locally'}</Text>
-          <Text style={styles.footerText}>{'// no telemetry · no accounts · open source'}</Text>
-        </View>
+        <Text style={[styles.version, { color: colors.textFaint }]}>
+          NeuralKey v1.0.0 · Built with Expo
+        </Text>
       </ScrollView>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0d0d0d' },
+  container: { flex: 1 },
   header: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end',
-    paddingHorizontal: 16, paddingBottom: 12,
-    borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.08)',
+    paddingHorizontal: 20,
+    paddingBottom: 14,
   },
-  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  headerTitle: { fontFamily: MONO_FONT, color: '#f5f5f5', fontSize: 18, fontWeight: '700' },
-  headerVersion: { fontFamily: MONO_FONT, color: '#525252', fontSize: 10 },
-  scroll: { flex: 1 },
-  scrollContent: { padding: 16, gap: 24, paddingBottom: 32 },
-  section: { gap: 8 },
-  sectionLabel: {
-    fontFamily: MONO_FONT, color: '#8b5cf6', fontSize: 10,
-    letterSpacing: 2, paddingLeft: 4,
+  headerTitle: { fontSize: 28, fontFamily: 'Inter_700Bold', letterSpacing: -0.3 },
+  content: { padding: 16, gap: 8 },
+  section: { gap: 6 },
+  sectionTitle: { fontSize: 11, fontFamily: 'Inter_600SemiBold', letterSpacing: 0.8, marginBottom: 2, marginLeft: 4 },
+  sectionCards: { gap: 2 },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    gap: 12,
   },
-  card: {
-    borderRadius: 14, backgroundColor: '#171717',
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)', overflow: 'hidden',
+  rowIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 9,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  dangerCard: { borderColor: 'rgba(239,68,68,0.15)' },
-  rowSep: { height: 1, backgroundColor: 'rgba(255,255,255,0.06)', marginLeft: 52 },
-  settingRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    paddingHorizontal: 16, paddingVertical: 14,
-  },
-  settingIcon: {
-    width: 28, height: 28, borderRadius: 8,
-    backgroundColor: 'rgba(139,92,246,0.12)',
-    justifyContent: 'center', alignItems: 'center',
-  },
-  settingIconDanger: { backgroundColor: 'rgba(239,68,68,0.12)' },
-  settingLabel: { flex: 1, fontFamily: MONO_FONT, color: '#f5f5f5', fontSize: 14 },
-  settingLabelDanger: { color: '#ef4444' },
-  settingRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  badge: {
-    borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2,
-  },
-  badgeText: { fontFamily: MONO_FONT, fontSize: 10, fontWeight: '700' },
-  footer: { alignItems: 'center', gap: 4, paddingTop: 8 },
-  footerText: { fontFamily: MONO_FONT, color: '#404040', fontSize: 10 },
+  rowLabel: { flex: 1, fontSize: 15, fontFamily: 'Inter_500Medium' },
+  rowRight: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  rowValue: { fontSize: 13, fontFamily: 'Inter_400Regular' },
+  version: { fontSize: 12, fontFamily: 'Inter_400Regular', textAlign: 'center', marginTop: 16 },
 });

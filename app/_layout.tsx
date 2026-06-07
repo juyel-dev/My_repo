@@ -4,55 +4,42 @@ import {
   Inter_600SemiBold,
   Inter_700Bold,
   useFonts,
-} from "@expo-google-fonts/inter";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Stack } from "expo-router";
-import * as SplashScreen from "expo-splash-screen";
-import React, { useEffect } from "react";
-import { GestureHandlerRootView } from "react-native-gesture-handler";
-import { KeyboardProvider } from "react-native-keyboard-controller";
-import { SafeAreaProvider } from "react-native-safe-area-context";
-
-import { ErrorBoundary } from "@/components/ErrorBoundary";
-import { AppContextProvider } from "@/context/AppContext";
+} from '@expo-google-fonts/inter';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { Stack } from 'expo-router';
+import * as SplashScreen from 'expo-splash-screen';
+import React, { useEffect } from 'react';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { KeyboardProvider } from 'react-native-keyboard-controller';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { AppContextProvider } from '@/context/AppContext';
 
 SplashScreen.preventAutoHideAsync();
 
 const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      staleTime: 1000 * 60 * 5,
-      gcTime: 1000 * 60 * 10,
-      retry: (failureCount, error) => {
-        if (error instanceof Error && error.message.includes('401')) return false;
-        if (error instanceof Error && error.message.includes('403')) return false;
-        return failureCount < 2;
-      },
-      retryDelay: attemptIndex => Math.min(1000 * 2 ** attemptIndex, 10000),
-      refetchOnWindowFocus: false,
-    },
-    mutations: {
-      retry: 0,
-    },
-  },
+  defaultOptions: { queries: { retry: 1, staleTime: 30_000 } },
 });
-
-const screenOptions = {
-  headerShown: false,
-  contentStyle: { backgroundColor: '#0d0d0d' },
-  animation: 'slide_from_right',
-} as const;
 
 function RootLayoutNav() {
   return (
-    <Stack screenOptions={screenOptions}>
+    <Stack
+      screenOptions={{
+        headerShown: false,
+        contentStyle: { backgroundColor: '#0a0a0a' },
+        animation: 'slide_from_right',
+      }}
+    >
       <Stack.Screen name="index" />
-      <Stack.Screen name="(onboarding)" options={{ animation: 'fade' }} />
-      <Stack.Screen name="(tabs)" options={{ animation: 'fade' }} />
-      <Stack.Screen name="chat/[id]" />
+      <Stack.Screen name="(onboarding)" />
+      <Stack.Screen name="(tabs)" />
+      <Stack.Screen
+        name="chat/[id]"
+        options={{ animation: 'slide_from_bottom', gestureEnabled: true }}
+      />
       <Stack.Screen name="settings/providers/index" />
-      <Stack.Screen name="settings/providers/[id]" />
       <Stack.Screen name="settings/providers/add" />
+      <Stack.Screen name="settings/providers/[id]" />
       <Stack.Screen name="settings/models" />
       <Stack.Screen name="settings/agents/index" />
       <Stack.Screen name="settings/agents/[id]" />
@@ -60,7 +47,6 @@ function RootLayoutNav() {
       <Stack.Screen name="settings/mcp/[id]" />
       <Stack.Screen name="settings/memory" />
       <Stack.Screen name="settings/danger" />
-      <Stack.Screen name="+not-found" />
     </Stack>
   );
 }
@@ -85,13 +71,13 @@ export default function RootLayout() {
     <SafeAreaProvider>
       <ErrorBoundary>
         <QueryClientProvider client={queryClient}>
-          <GestureHandlerRootView style={{ flex: 1 }}>
-            <KeyboardProvider>
-              <AppContextProvider>
+          <AppContextProvider>
+            <GestureHandlerRootView style={{ flex: 1 }}>
+              <KeyboardProvider>
                 <RootLayoutNav />
-              </AppContextProvider>
-            </KeyboardProvider>
-          </GestureHandlerRootView>
+              </KeyboardProvider>
+            </GestureHandlerRootView>
+          </AppContextProvider>
         </QueryClientProvider>
       </ErrorBoundary>
     </SafeAreaProvider>

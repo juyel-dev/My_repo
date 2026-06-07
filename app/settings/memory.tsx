@@ -1,102 +1,87 @@
+import { Feather } from '@expo/vector-icons';
+import { router } from 'expo-router';
 import React from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform,
+  Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
-import { Feather } from '@expo/vector-icons';
 import { useApp } from '@/context/AppContext';
-import { MONO_FONT } from '@/constants/colors';
-
-function ToggleRow({ label, desc, value, onToggle }: {
-  label: string; desc: string; value: boolean; onToggle: () => void;
-}) {
-  return (
-    <View style={styles.toggleRow}>
-      <View style={styles.toggleLeft}>
-        <Text style={styles.toggleLabel}>{label}</Text>
-        <Text style={styles.toggleDesc}>{desc}</Text>
-      </View>
-      <TouchableOpacity onPress={onToggle} hitSlop={8}>
-        <Feather name={value ? 'toggle-right' : 'toggle-left'} size={24} color={value ? '#8b5cf6' : '#525252'} />
-      </TouchableOpacity>
-    </View>
-  );
-}
+import { useColors } from '@/hooks/useColors';
+import { useHaptics } from '@/hooks/useHaptics';
 
 export default function MemoryScreen() {
   const insets = useSafeAreaInsets();
+  const colors = useColors();
+  const haptics = useHaptics();
   const { state, updateSettings } = useApp();
-  const topPad = Platform.OS === 'web' ? 67 : insets.top;
-  const s = state.settings;
+  const { settings } = state;
+  const top = Platform.OS === 'web' ? 67 : insets.top;
+  const bottom = Platform.OS === 'web' ? 34 : insets.bottom;
 
-  const toggle = (key: keyof typeof s) => {
-    updateSettings({ [key]: !s[key] });
+  const totalMessages = state.conversations.reduce((s, c) => s + c.messages.length, 0);
+  const totalConvs = state.conversations.length;
+
+  const toggle = (key: 'persistentMemory' | 'sessionMemory' | 'autoSummarize') => {
+    haptics.selection();
+    updateSettings({ [key]: !settings[key] });
   };
 
   return (
-    <View style={[styles.container, { paddingTop: topPad, paddingBottom: insets.bottom }]}>
-      <View style={styles.topBar}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} hitSlop={8}>
-          <Feather name="arrow-left" size={18} color="#a1a1a1" />
-        </TouchableOpacity>
-        <Text style={styles.title}>{'Memory & Personalization'}</Text>
-        <View style={{ width: 32 }} />
+    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: top }]}>
+      <View style={[styles.header, { borderBottomColor: colors.border }]}>
+        <Pressable onPress={() => router.back()} hitSlop={12}>
+          <Feather name="arrow-left" size={22} color={colors.textMuted} />
+        </Pressable>
+        <Text style={[styles.title, { color: colors.text }]}>Memory & Storage</Text>
+        <View style={{ width: 22 }} />
       </View>
 
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        {/* Memory */}
-        <View style={styles.section}>
-          <Text style={styles.sectionLabel}>{'// MEMORY'}</Text>
-          <View style={styles.card}>
-            <ToggleRow
-              label="Persistent Memory"
-              desc="// retains context across sessions"
-              value={s.persistentMemory}
-              onToggle={() => toggle('persistentMemory')}
-            />
-            <View style={styles.sep} />
-            <ToggleRow
-              label="Session Memory"
-              desc="// active within current session only"
-              value={s.sessionMemory}
-              onToggle={() => toggle('sessionMemory')}
-            />
-            <View style={styles.sep} />
-            <ToggleRow
-              label="Auto-Summarize"
-              desc="// compresses old context automatically"
-              value={s.autoSummarize}
-              onToggle={() => toggle('autoSummarize')}
-            />
+      <ScrollView contentContainerStyle={[styles.content, { paddingBottom: bottom + 20 }]}>
+        <View style={[styles.statsRow, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <View style={styles.stat}>
+            <Text style={[styles.statNum, { color: colors.text }]}>{totalConvs}</Text>
+            <Text style={[styles.statLabel, { color: colors.textDim }]}>Conversations</Text>
+          </View>
+          <View style={[styles.statDivider, { backgroundColor: colors.border }]} />
+          <View style={styles.stat}>
+            <Text style={[styles.statNum, { color: colors.text }]}>{totalMessages}</Text>
+            <Text style={[styles.statLabel, { color: colors.textDim }]}>Messages</Text>
+          </View>
+          <View style={[styles.statDivider, { backgroundColor: colors.border }]} />
+          <View style={styles.stat}>
+            <Text style={[styles.statNum, { color: colors.text }]}>{state.providers.length}</Text>
+            <Text style={[styles.statLabel, { color: colors.textDim }]}>Providers</Text>
           </View>
         </View>
 
-        {/* UX */}
-        <View style={styles.section}>
-          <Text style={styles.sectionLabel}>{'// EXPERIENCE'}</Text>
-          <View style={styles.card}>
-            <ToggleRow
-              label="Haptic Feedback"
-              desc="// vibration on key interactions"
-              value={s.hapticFeedback}
-              onToggle={() => toggle('hapticFeedback')}
-            />
-            <View style={styles.sep} />
-            <ToggleRow
-              label="Streaming Responses"
-              desc="// show text as it's generated"
-              value={s.streamingEnabled}
-              onToggle={() => toggle('streamingEnabled')}
+        <Text style={[styles.sectionLabel, { color: colors.textDim }]}>MEMORY SETTINGS</Text>
+
+        {[
+          { key: 'persistentMemory' as const, icon: 'database' as const, title: 'Persistent Memory', desc: 'Save conversation history to local storage across app restarts' },
+          { key: 'sessionMemory' as const, icon: 'clock' as const, title: 'Session Memory', desc: 'Remember context within the current session' },
+          { key: 'autoSummarize' as const, icon: 'file-text' as const, title: 'Auto-Summarize', desc: 'Automatically generate summaries for long conversations' },
+        ].map(({ key, icon, title, desc }) => (
+          <View key={key} style={[styles.row, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <View style={[styles.rowIcon, { backgroundColor: colors.primaryMuted, borderColor: colors.primaryBorder }]}>
+              <Feather name={icon} size={15} color={colors.primary} />
+            </View>
+            <View style={styles.rowText}>
+              <Text style={[styles.rowTitle, { color: colors.text }]}>{title}</Text>
+              <Text style={[styles.rowDesc, { color: colors.textDim }]}>{desc}</Text>
+            </View>
+            <Switch
+              value={settings[key]}
+              onValueChange={() => toggle(key)}
+              trackColor={{ false: colors.chip, true: colors.primary }}
+              thumbColor="#fff"
             />
           </View>
-        </View>
+        ))}
 
-        {/* Info */}
-        <View style={styles.infoCard}>
-          <Feather name="shield" size={13} color="#8b5cf6" />
-          <Text style={styles.infoText}>
-            {'All memory data is stored locally on your device. Nothing is sent to external servers without your API keys being used for AI requests.'}
+        <View style={[styles.infoBox, { backgroundColor: colors.primaryMuted, borderColor: colors.primaryBorder }]}>
+          <Feather name="shield" size={14} color={colors.primary} />
+          <Text style={[styles.infoText, { color: colors.textMuted }]}>
+            All data is stored locally on your device using AsyncStorage. Nothing is sent to any server other than your chosen AI provider.
           </Text>
         </View>
       </ScrollView>
@@ -105,31 +90,34 @@ export default function MemoryScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0d0d0d' },
-  topBar: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    paddingHorizontal: 16, paddingVertical: 12,
-    borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.08)',
+  container: { flex: 1 },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
   },
-  backBtn: {
-    width: 32, height: 32, borderRadius: 16,
-    backgroundColor: '#171717', justifyContent: 'center', alignItems: 'center',
+  title: { fontSize: 16, fontFamily: 'Inter_600SemiBold', flex: 1, textAlign: 'center' },
+  content: { padding: 16, gap: 10 },
+  statsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 20,
   },
-  title: { flex: 1, fontFamily: MONO_FONT, color: '#f5f5f5', fontSize: 14, fontWeight: '700', textAlign: 'center' },
-  scroll: { flex: 1 },
-  content: { padding: 16, gap: 24, paddingBottom: 32 },
-  section: { gap: 8 },
-  sectionLabel: { fontFamily: MONO_FONT, color: '#8b5cf6', fontSize: 10, letterSpacing: 2 },
-  card: { backgroundColor: '#171717', borderRadius: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)', overflow: 'hidden' },
-  toggleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 14 },
-  toggleLeft: { flex: 1, gap: 3 },
-  toggleLabel: { fontFamily: MONO_FONT, color: '#f5f5f5', fontSize: 14 },
-  toggleDesc: { fontFamily: MONO_FONT, color: '#525252', fontSize: 10 },
-  sep: { height: 1, backgroundColor: 'rgba(255,255,255,0.06)', marginHorizontal: 16 },
-  infoCard: {
-    flexDirection: 'row', gap: 12, alignItems: 'flex-start',
-    backgroundColor: 'rgba(139,92,246,0.06)', borderRadius: 14,
-    borderWidth: 1, borderColor: 'rgba(139,92,246,0.15)', padding: 14,
-  },
-  infoText: { fontFamily: MONO_FONT, color: '#737373', fontSize: 11, flex: 1, lineHeight: 16 },
+  stat: { flex: 1, alignItems: 'center', gap: 4 },
+  statNum: { fontSize: 24, fontFamily: 'Inter_700Bold' },
+  statLabel: { fontSize: 11, fontFamily: 'Inter_400Regular' },
+  statDivider: { width: 1, height: 36, marginHorizontal: 8 },
+  sectionLabel: { fontSize: 11, fontFamily: 'Inter_600SemiBold', letterSpacing: 0.8, marginTop: 8, marginLeft: 4 },
+  row: { flexDirection: 'row', alignItems: 'center', padding: 14, borderRadius: 14, borderWidth: 1, gap: 12 },
+  rowIcon: { width: 36, height: 36, borderRadius: 10, borderWidth: 1, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  rowText: { flex: 1 },
+  rowTitle: { fontSize: 15, fontFamily: 'Inter_500Medium' },
+  rowDesc: { fontSize: 12, fontFamily: 'Inter_400Regular', marginTop: 2, lineHeight: 17 },
+  infoBox: { flexDirection: 'row', gap: 10, padding: 14, borderRadius: 12, borderWidth: 1, alignItems: 'flex-start' },
+  infoText: { flex: 1, fontSize: 13, fontFamily: 'Inter_400Regular', lineHeight: 19 },
 });

@@ -1,240 +1,265 @@
+import { Feather } from '@expo/vector-icons';
+import { router } from 'expo-router';
 import React, { useState } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, TextInput,
-  ScrollView, Platform, Alert,
+  ActivityIndicator, Alert, KeyboardAvoidingView, Platform,
+  Pressable, ScrollView, StyleSheet, Text, TextInput, View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
-import { Feather } from '@expo/vector-icons';
 import { useApp } from '@/context/AppContext';
-import { MONO_FONT } from '@/constants/colors';
+import { useColors } from '@/hooks/useColors';
+import { useHaptics } from '@/hooks/useHaptics';
 import type { ProviderType } from '@/types';
 
-const PROVIDERS: { type: ProviderType; name: string; placeholder: string; url: string }[] = [
-  { type: 'openai', name: 'OpenAI', placeholder: 'sk-••••••••••••••••••••••••••••••••', url: 'https://api.openai.com/v1' },
-  { type: 'anthropic', name: 'Anthropic', placeholder: 'sk-ant-••••••••••••••••••••••••••', url: 'https://api.anthropic.com' },
-  { type: 'gemini', name: 'Google Gemini', placeholder: 'AIza••••••••••••••••••••••••••', url: 'https://generativelanguage.googleapis.com/v1beta/openai' },
-  { type: 'custom', name: 'Custom / Local', placeholder: 'sk-••••••• or leave blank', url: 'http://localhost:11434/v1' },
+const PROVIDERS = [
+  { type: 'openai' as ProviderType, name: 'OpenAI', placeholder: 'sk-...', hint: 'platform.openai.com/api-keys' },
+  { type: 'anthropic' as ProviderType, name: 'Anthropic', placeholder: 'sk-ant-...', hint: 'console.anthropic.com' },
+  { type: 'gemini' as ProviderType, name: 'Google Gemini', placeholder: 'AIza...', hint: 'aistudio.google.com/apikey' },
+  { type: 'custom' as ProviderType, name: 'Custom / OpenAI-Compatible', placeholder: 'sk-...', hint: 'Any OpenAI-compatible endpoint' },
 ];
 
 export default function SetupScreen() {
   const insets = useSafeAreaInsets();
+  const colors = useColors();
+  const haptics = useHaptics();
   const { addProvider, completeOnboarding } = useApp();
-  const [selected, setSelected] = useState<ProviderType>('openai');
+  const [selectedType, setSelectedType] = useState<ProviderType>('openai');
   const [apiKey, setApiKey] = useState('');
   const [baseUrl, setBaseUrl] = useState('');
   const [customName, setCustomName] = useState('');
   const [loading, setLoading] = useState(false);
-  const [showKey, setShowKey] = useState(false);
 
-  const selectedProvider = PROVIDERS.find(p => p.type === selected)!;
+  const top = Platform.OS === 'web' ? 67 : insets.top;
+  const bottom = Platform.OS === 'web' ? 34 : insets.bottom;
+  const selected = PROVIDERS.find(p => p.type === selectedType)!;
+
+  const handleSkip = async () => {
+    haptics.light();
+    await completeOnboarding();
+    router.replace('/(tabs)');
+  };
 
   const handleContinue = async () => {
+    if (!apiKey.trim()) {
+      Alert.alert('API Key Required', 'Please enter your API key to continue.');
+      return;
+    }
+    if (selectedType === 'custom' && !customName.trim()) {
+      Alert.alert('Name Required', 'Please give your custom provider a name.');
+      return;
+    }
     setLoading(true);
+    haptics.medium();
     try {
-      if (apiKey.trim()) {
-        await addProvider({
-          name: selected === 'custom' ? (customName.trim() || 'Custom Provider') : selectedProvider.name,
-          type: selected,
-          apiKey: apiKey.trim(),
-          baseUrl: baseUrl.trim() || selectedProvider.url,
-          enabled: true,
-        });
-      }
+      const name = selectedType === 'custom' ? customName : selected.name;
+      await addProvider({
+        name,
+        type: selectedType,
+        apiKey: apiKey.trim(),
+        baseUrl: selectedType === 'custom' ? baseUrl.trim() : undefined,
+        enabled: true,
+      });
       await completeOnboarding();
+      haptics.success();
       router.replace('/(tabs)');
-    } catch (e) {
-      Alert.alert('Error', String(e));
+    } catch {
+      haptics.error();
+      Alert.alert('Error', 'Failed to save provider. Please try again.');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSkip = async () => {
-    await completeOnboarding();
-    router.replace('/(tabs)');
-  };
-
   return (
-    <View style={[styles.container, { paddingTop: insets.top + (Platform.OS === 'web' ? 67 : 0), paddingBottom: insets.bottom }]}>
-      {/* Header */}
-      <View style={styles.topBar}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} hitSlop={8}>
-          <Feather name="arrow-left" size={18} color="#a1a1a1" />
-        </TouchableOpacity>
-        <Text style={styles.topTitle}>Add API Key</Text>
-        <TouchableOpacity onPress={handleSkip} style={styles.skipBtn}>
-          <Text style={styles.skipText}>Skip</Text>
-        </TouchableOpacity>
-      </View>
-
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-        <Text style={styles.sectionLabel}>{'// SELECT PROVIDER'}</Text>
-
-        {/* Provider tabs */}
-        <View style={styles.providerGrid}>
-          {PROVIDERS.map(p => (
-            <TouchableOpacity
-              key={p.type}
-              style={[styles.providerChip, selected === p.type && styles.providerChipActive]}
-              onPress={() => { setSelected(p.type); setApiKey(''); setBaseUrl(''); }}
-              activeOpacity={0.7}
-            >
-              <Text style={[styles.providerChipText, selected === p.type && styles.providerChipTextActive]}>
-                {p.name}
-              </Text>
-            </TouchableOpacity>
-          ))}
+    <KeyboardAvoidingView
+      style={{ flex: 1 }}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    >
+      <View style={[styles.container, { backgroundColor: colors.background, paddingTop: top }]}>
+        <View style={[styles.header, { borderBottomColor: colors.border }]}>
+          <Pressable onPress={() => router.back()} hitSlop={12}>
+            <Feather name="arrow-left" size={22} color={colors.textMuted} />
+          </Pressable>
+          <Text style={[styles.headerTitle, { color: colors.text }]}>Add AI Provider</Text>
+          <Pressable onPress={handleSkip} hitSlop={12}>
+            <Text style={[styles.skipText, { color: colors.textDim }]}>Skip</Text>
+          </Pressable>
         </View>
 
-        {/* Custom provider name */}
-        {selected === 'custom' && (
-          <View style={styles.field}>
-            <Text style={styles.fieldLabel}>{'// PROVIDER NAME'}</Text>
-            <View style={styles.inputRow}>
-              <Feather name="tag" size={14} color="#737373" />
+        <ScrollView
+          contentContainerStyle={[styles.content, { paddingBottom: bottom + 100 }]}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          <Text style={[styles.sectionLabel, { color: colors.textDim }]}>CHOOSE PROVIDER</Text>
+          <View style={styles.providerGrid}>
+            {PROVIDERS.map(p => (
+              <Pressable
+                key={p.type}
+                onPress={() => { haptics.selection(); setSelectedType(p.type); }}
+                style={({ pressed }) => [
+                  styles.providerChip,
+                  {
+                    backgroundColor: selectedType === p.type ? colors.primaryMuted : colors.card,
+                    borderColor: selectedType === p.type ? colors.primary : colors.border,
+                    opacity: pressed ? 0.8 : 1,
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.providerChipText,
+                    { color: selectedType === p.type ? colors.primary : colors.textMuted },
+                  ]}
+                >
+                  {p.name}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+
+          {selectedType === 'custom' && (
+            <>
+              <Text style={[styles.sectionLabel, { color: colors.textDim }]}>PROVIDER NAME</Text>
               <TextInput
-                style={styles.input}
-                placeholder="e.g. My Local LLM"
-                placeholderTextColor="#525252"
+                style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
+                placeholder="e.g. My LLM Server"
+                placeholderTextColor={colors.textFaint}
                 value={customName}
                 onChangeText={setCustomName}
-                autoCapitalize="words"
               />
-            </View>
-          </View>
-        )}
+            </>
+          )}
 
-        {/* API Key */}
-        <View style={styles.field}>
-          <Text style={styles.fieldLabel}>{'// API KEY'}</Text>
-          <View style={styles.inputRow}>
-            <Feather name="key" size={14} color="#737373" />
-            <TextInput
-              style={[styles.input, { flex: 1 }]}
-              placeholder={selectedProvider.placeholder}
-              placeholderTextColor="#525252"
-              value={apiKey}
-              onChangeText={setApiKey}
-              secureTextEntry={!showKey}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-            <TouchableOpacity onPress={() => setShowKey(v => !v)} hitSlop={8}>
-              <Feather name={showKey ? 'eye-off' : 'eye'} size={14} color="#737373" />
-            </TouchableOpacity>
-          </View>
-          <Text style={styles.fieldHint}>// stored locally on-device only · never transmitted</Text>
-        </View>
-
-        {/* Base URL (optional) */}
-        <View style={styles.field}>
-          <Text style={styles.fieldLabel}>{'// BASE URL (OPTIONAL)'}</Text>
-          <View style={styles.inputRow}>
-            <Feather name="link" size={14} color="#737373" />
-            <TextInput
-              style={styles.input}
-              placeholder={selectedProvider.url}
-              placeholderTextColor="#525252"
-              value={baseUrl}
-              onChangeText={setBaseUrl}
-              autoCapitalize="none"
-              autoCorrect={false}
-              keyboardType="url"
-            />
-          </View>
-          <Text style={styles.fieldHint}>// leave blank to use default endpoint</Text>
-        </View>
-
-        <View style={styles.infoCard}>
-          <Feather name="shield" size={12} color="#8b5cf6" />
-          <Text style={styles.infoText}>Your API key is stored locally and never sent to NeuralKey servers. All AI requests go directly from your device to the provider.</Text>
-        </View>
-      </ScrollView>
-
-      {/* Bottom */}
-      <View style={[styles.bottomBar, { paddingBottom: insets.bottom || 24 }]}>
-        <TouchableOpacity
-          style={[styles.continueBtn, loading && styles.continueBtnDisabled]}
-          onPress={handleContinue}
-          activeOpacity={0.8}
-          disabled={loading}
-        >
-          <Text style={styles.continueBtnText}>
-            {loading ? '// Saving...' : apiKey.trim() ? '// Save & Continue' : '// Continue without key'}
+          <Text style={[styles.sectionLabel, { color: colors.textDim }]}>API KEY</Text>
+          <TextInput
+            style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border, fontFamily: 'Inter_400Regular' }]}
+            placeholder={selected.placeholder}
+            placeholderTextColor={colors.textFaint}
+            value={apiKey}
+            onChangeText={setApiKey}
+            secureTextEntry
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="visible-password"
+          />
+          <Text style={[styles.hint, { color: colors.textFaint }]}>
+            Get your key at {selected.hint}
           </Text>
-          {!loading && <Feather name="arrow-right" size={16} color="#fff" />}
-        </TouchableOpacity>
+
+          {selectedType === 'custom' && (
+            <>
+              <Text style={[styles.sectionLabel, { color: colors.textDim }]}>BASE URL</Text>
+              <TextInput
+                style={[styles.input, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]}
+                placeholder="https://api.example.com/v1"
+                placeholderTextColor={colors.textFaint}
+                value={baseUrl}
+                onChangeText={setBaseUrl}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+            </>
+          )}
+
+          <View style={[styles.privacyNote, { backgroundColor: colors.primaryMuted, borderColor: colors.primaryBorder }]}>
+            <Feather name="shield" size={14} color={colors.primary} />
+            <Text style={[styles.privacyText, { color: colors.textMuted }]}>
+              Your API key is stored only on this device. It is never sent to any server other than your chosen AI provider.
+            </Text>
+          </View>
+        </ScrollView>
+
+        <View style={[styles.footer, { paddingBottom: bottom + 16, backgroundColor: colors.background }]}>
+          <Pressable
+            onPress={handleContinue}
+            disabled={loading}
+            style={({ pressed }) => [
+              styles.btn,
+              { backgroundColor: colors.primary, opacity: pressed || loading ? 0.7 : 1 },
+            ]}
+          >
+            {loading ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <>
+                <Text style={styles.btnText}>Save and Continue</Text>
+                <Feather name="check" size={18} color="#fff" />
+              </>
+            )}
+          </Pressable>
+        </View>
       </View>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0d0d0d' },
-  topBar: {
+  container: { flex: 1 },
+  header: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 14,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.08)',
   },
-  backBtn: {
-    width: 32, height: 32, borderRadius: 16,
-    backgroundColor: '#171717',
-    justifyContent: 'center', alignItems: 'center',
-  },
-  topTitle: {
-    flex: 1, textAlign: 'center',
-    fontFamily: MONO_FONT, color: '#f5f5f5', fontSize: 14, fontWeight: '700',
-  },
-  skipBtn: { padding: 4 },
-  skipText: { fontFamily: MONO_FONT, color: '#737373', fontSize: 12 },
-  scroll: { flex: 1 },
-  scrollContent: { padding: 16, gap: 20 },
+  headerTitle: { fontSize: 16, fontFamily: 'Inter_600SemiBold' },
+  skipText: { fontSize: 15, fontFamily: 'Inter_400Regular' },
+  content: { padding: 20, gap: 10 },
   sectionLabel: {
-    fontFamily: MONO_FONT, color: '#8b5cf6', fontSize: 10,
-    letterSpacing: 2, textTransform: 'uppercase',
+    fontSize: 11,
+    fontFamily: 'Inter_600SemiBold',
+    letterSpacing: 0.8,
+    marginTop: 8,
+    marginBottom: 2,
   },
-  providerGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  providerGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
   providerChip: {
-    paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8,
-    backgroundColor: '#171717', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 10,
+    borderWidth: 1,
   },
-  providerChipActive: {
-    backgroundColor: 'rgba(139,92,246,0.15)',
-    borderColor: 'rgba(139,92,246,0.5)',
-  },
-  providerChipText: { fontFamily: MONO_FONT, color: '#737373', fontSize: 12 },
-  providerChipTextActive: { color: '#8b5cf6' },
-  field: { gap: 8 },
-  fieldLabel: { fontFamily: MONO_FONT, color: '#8b5cf6', fontSize: 10, letterSpacing: 2 },
-  inputRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 10,
-    backgroundColor: '#1f1f1f', borderRadius: 10,
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
-    paddingHorizontal: 12, paddingVertical: 10,
-  },
+  providerChipText: { fontSize: 13, fontFamily: 'Inter_500Medium' },
   input: {
-    flex: 1, fontFamily: MONO_FONT, color: '#f5f5f5', fontSize: 12,
+    height: 48,
+    borderRadius: 12,
+    borderWidth: 1,
+    paddingHorizontal: 14,
+    fontSize: 15,
+    fontFamily: 'Inter_400Regular',
   },
-  fieldHint: { fontFamily: MONO_FONT, color: '#525252', fontSize: 10 },
-  infoCard: {
-    flexDirection: 'row', gap: 10, alignItems: 'flex-start',
-    backgroundColor: 'rgba(139,92,246,0.06)',
-    borderRadius: 10, borderWidth: 1, borderColor: 'rgba(139,92,246,0.15)',
-    padding: 12,
+  hint: { fontSize: 12, fontFamily: 'Inter_400Regular', marginTop: -4 },
+  privacyNote: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginTop: 12,
   },
-  infoText: { fontFamily: MONO_FONT, color: '#737373', fontSize: 11, flex: 1, lineHeight: 16 },
-  bottomBar: {
-    paddingHorizontal: 16, paddingTop: 12,
-    borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.08)',
+  privacyText: { fontSize: 13, fontFamily: 'Inter_400Regular', lineHeight: 19, flex: 1 },
+  footer: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    paddingHorizontal: 20,
+    paddingTop: 10,
   },
-  continueBtn: {
-    height: 48, borderRadius: 12, backgroundColor: '#8b5cf6',
-    flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 8,
+  btn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 54,
+    borderRadius: 16,
+    gap: 8,
   },
-  continueBtnDisabled: { opacity: 0.5 },
-  continueBtnText: { fontFamily: MONO_FONT, color: '#fff', fontSize: 13, fontWeight: '700' },
+  btnText: { fontSize: 16, fontFamily: 'Inter_600SemiBold', color: '#fff' },
 });

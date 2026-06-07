@@ -1,200 +1,178 @@
-import React from 'react';
-import {
-  View, Text, TouchableOpacity, StyleSheet, Platform,
-} from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
-import { MONO_FONT } from '@/constants/colors';
+import { router } from 'expo-router';
+import React, { useEffect } from 'react';
+import {
+  Platform, Pressable, StatusBar, StyleSheet, Text, View,
+} from 'react-native';
+import Animated, {
+  FadeIn, FadeInDown, useAnimatedStyle,
+  useSharedValue, withRepeat, withSequence, withTiming,
+} from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useColors } from '@/hooks/useColors';
+import { useHaptics } from '@/hooks/useHaptics';
 
-export default function LandingScreen() {
-  const insets = useSafeAreaInsets();
+function PulsingOrb({ colors }: { colors: ReturnType<typeof useColors> }) {
+  const scale = useSharedValue(1);
+
+  useEffect(() => {
+    scale.value = withRepeat(
+      withSequence(
+        withTiming(1.12, { duration: 2000 }),
+        withTiming(1, { duration: 2000 }),
+      ),
+      -1,
+      false,
+    );
+  }, [scale]);
+
+  const style = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+  }));
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
-      <View style={styles.topSection}>
-        <View style={styles.logoRow}>
-          <View style={styles.logoIcon}>
-            <Feather name="cpu" size={14} color="#8b5cf6" />
-          </View>
-          <Text style={styles.logoText}>neuralkey</Text>
-        </View>
+    <Animated.View style={[styles.orbWrap, style]}>
+      <View style={[styles.orbOuter, { borderColor: colors.primaryBorder }]} />
+      <View style={[styles.orbInner, { backgroundColor: colors.primaryMuted, borderColor: colors.primary }]}>
+        <Feather name="cpu" size={40} color={colors.primary} />
+      </View>
+    </Animated.View>
+  );
+}
 
-        <View style={styles.divider}>
-          <Text style={styles.dividerLine}>───────────────────────────────</Text>
-        </View>
+export default function OnboardingWelcome() {
+  const insets = useSafeAreaInsets();
+  const colors = useColors();
+  const haptics = useHaptics();
 
-        <View style={styles.taglineSection}>
-          <Text style={styles.taglineComment}>// Your keys. Your models. Your data.</Text>
-        </View>
+  const top = Platform.OS === 'web' ? 67 : insets.top;
+  const bottom = Platform.OS === 'web' ? 34 : insets.bottom;
 
-        <View style={styles.divider}>
-          <Text style={styles.dividerLine}>───────────────────────────────</Text>
-        </View>
+  const handleNext = () => {
+    haptics.medium();
+    router.push('/(onboarding)/features');
+  };
 
-        <View style={styles.descSection}>
-          <Text style={styles.desc}>A personal, private AI chat client.</Text>
-          <Text style={styles.desc}>Bring your own API keys.</Text>
-          <Text style={styles.desc}>No middleman. No telemetry.</Text>
-        </View>
+  return (
+    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: top, paddingBottom: bottom }]}>
+      <StatusBar barStyle="light-content" />
 
-        <View style={styles.divider}>
-          <Text style={styles.dividerLine}>───────────────────────────────</Text>
-        </View>
+      <View style={styles.content}>
+        <Animated.View entering={FadeIn.duration(600)} style={styles.orbSection}>
+          <PulsingOrb colors={colors} />
+        </Animated.View>
 
-        <View style={styles.featRow}>
-          <View style={styles.feat}>
-            <Feather name="shield" size={10} color="#8b5cf6" />
-            <Text style={styles.featText}>Private</Text>
-          </View>
-          <View style={styles.feat}>
-            <Feather name="wifi-off" size={10} color="#8b5cf6" />
-            <Text style={styles.featText}>Offline</Text>
-          </View>
-          <View style={styles.feat}>
-            <Feather name="code" size={10} color="#8b5cf6" />
-            <Text style={styles.featText}>Open</Text>
-          </View>
-        </View>
+        <Animated.View entering={FadeInDown.delay(300).duration(500)} style={styles.textSection}>
+          <Text style={[styles.headline, { color: colors.text }]}>
+            Welcome to{'\n'}
+            <Text style={{ color: colors.primary }}>NeuralKey</Text>
+          </Text>
+          <Text style={[styles.body, { color: colors.textMuted }]}>
+            Your private AI workspace. Bring your own API keys and connect to any AI provider. Everything stays on your device.
+          </Text>
+        </Animated.View>
+
+        <Animated.View entering={FadeInDown.delay(500).duration(500)} style={styles.features}>
+          {[
+            { icon: 'shield' as const, text: 'Your keys, your data. Never stored in the cloud.' },
+            { icon: 'zap' as const, text: 'Connect OpenAI, Anthropic, Gemini, and more.' },
+            { icon: 'sliders' as const, text: 'Customizable agents with unique personalities.' },
+          ].map(({ icon, text }, i) => (
+            <View key={i} style={styles.feature}>
+              <View style={[styles.featureIcon, { backgroundColor: colors.primaryMuted, borderColor: colors.primaryBorder }]}>
+                <Feather name={icon} size={14} color={colors.primary} />
+              </View>
+              <Text style={[styles.featureText, { color: colors.textMuted }]}>{text}</Text>
+            </View>
+          ))}
+        </Animated.View>
       </View>
 
-      <View style={styles.bottomSection}>
-        <TouchableOpacity
-          style={styles.primaryBtn}
-          activeOpacity={0.8}
-          onPress={() => router.push('/(onboarding)/features')}
+      <Animated.View entering={FadeInDown.delay(700).duration(400)} style={styles.footer}>
+        <Pressable
+          onPress={handleNext}
+          style={({ pressed }) => [
+            styles.btn,
+            { backgroundColor: colors.primary, opacity: pressed ? 0.85 : 1 },
+          ]}
         >
-          <Text style={styles.primaryBtnText}>{'// Get Started →'}</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          activeOpacity={0.7}
-          onPress={() => router.replace('/(tabs)')}
-          style={styles.secondaryBtn}
-        >
-          <Text style={styles.secondaryBtnText}>{'// Already configured? → Open Chat'}</Text>
-        </TouchableOpacity>
-
-        <Text style={styles.version}>v1.0.0 · Personal Build</Text>
-      </View>
+          <Text style={styles.btnText}>Get Started</Text>
+          <Feather name="arrow-right" size={18} color="#fff" />
+        </Pressable>
+      </Animated.View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#0d0d0d',
-    paddingHorizontal: 32,
-    justifyContent: 'space-between',
+  container: { flex: 1 },
+  content: { flex: 1, paddingHorizontal: 28, justifyContent: 'center', gap: 40 },
+  orbSection: { alignItems: 'center' },
+  orbWrap: { alignItems: 'center', justifyContent: 'center', width: 140, height: 140 },
+  orbOuter: {
+    position: 'absolute',
+    width: 130,
+    height: 130,
+    borderRadius: 65,
+    borderWidth: 1,
   },
-  topSection: {
-    flex: 1,
-    justifyContent: 'center',
+  orbInner: {
+    width: 90,
+    height: 90,
+    borderRadius: 45,
+    borderWidth: 1.5,
     alignItems: 'center',
-    gap: 20,
-    paddingTop: Platform.OS === 'web' ? 67 : 48,
+    justifyContent: 'center',
   },
-  logoRow: {
+  textSection: { gap: 12 },
+  headline: {
+    fontSize: 36,
+    fontFamily: 'Inter_700Bold',
+    lineHeight: 44,
+    letterSpacing: -0.5,
+  },
+  body: {
+    fontSize: 16,
+    fontFamily: 'Inter_400Regular',
+    lineHeight: 24,
+  },
+  features: { gap: 14 },
+  feature: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  featureIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+    marginTop: 1,
+  },
+  featureText: {
+    fontSize: 14,
+    fontFamily: 'Inter_400Regular',
+    lineHeight: 20,
+    flex: 1,
+  },
+  footer: {
+    paddingHorizontal: 28,
+    paddingBottom: 16,
+  },
+  btn: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    height: 54,
+    borderRadius: 16,
     gap: 8,
   },
-  logoIcon: {
-    width: 28,
-    height: 28,
-    borderRadius: 8,
-    backgroundColor: 'rgba(139,92,246,0.15)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(139,92,246,0.3)',
-  },
-  logoText: {
-    fontFamily: MONO_FONT,
-    color: '#f5f5f5',
+  btnText: {
     fontSize: 16,
-    letterSpacing: 2,
-    fontWeight: '700',
-  },
-  divider: {
-    width: '100%',
-    alignItems: 'center',
-  },
-  dividerLine: {
-    fontFamily: MONO_FONT,
-    color: 'rgba(255,255,255,0.08)',
-    fontSize: 10,
-  },
-  taglineSection: {
-    alignItems: 'center',
-  },
-  taglineComment: {
-    fontFamily: MONO_FONT,
-    color: '#8b5cf6',
-    fontSize: 11,
-    letterSpacing: 0.5,
-    textAlign: 'center',
-  },
-  descSection: {
-    alignItems: 'center',
-    gap: 4,
-  },
-  desc: {
-    fontFamily: MONO_FONT,
-    color: 'rgba(245,245,245,0.7)',
-    fontSize: 13,
-    textAlign: 'center',
-    lineHeight: 20,
-  },
-  featRow: {
-    flexDirection: 'row',
-    gap: 20,
-  },
-  feat: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  featText: {
-    fontFamily: MONO_FONT,
-    color: '#737373',
-    fontSize: 10,
-    letterSpacing: 1,
-  },
-  bottomSection: {
-    paddingBottom: 32,
-    gap: 16,
-    alignItems: 'center',
-  },
-  primaryBtn: {
-    width: '100%',
-    height: 48,
-    borderRadius: 12,
-    backgroundColor: 'rgba(139,92,246,0.15)',
-    borderWidth: 1,
-    borderColor: 'rgba(139,92,246,0.4)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  primaryBtnText: {
-    fontFamily: MONO_FONT,
-    color: '#8b5cf6',
-    fontSize: 13,
-    letterSpacing: 1,
-  },
-  secondaryBtn: {
-    padding: 8,
-  },
-  secondaryBtnText: {
-    fontFamily: MONO_FONT,
-    color: '#737373',
-    fontSize: 11,
-  },
-  version: {
-    fontFamily: MONO_FONT,
-    color: 'rgba(115,115,115,0.5)',
-    fontSize: 10,
-    letterSpacing: 0.5,
+    fontFamily: 'Inter_600SemiBold',
+    color: '#fff',
   },
 });

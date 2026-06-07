@@ -1,403 +1,389 @@
-import React, { useState, useCallback, useRef, useMemo } from 'react';
-import {
-  View, Text, TouchableOpacity, StyleSheet, FlatList,
-  TextInput, Platform, Alert, ActivityIndicator, Share,
-} from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useLocalSearchParams, router } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
+import { router, useLocalSearchParams } from 'expo-router';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  Alert, FlatList, Platform, Pressable, StyleSheet, Text, TextInput, View,
+} from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
-import * as Haptics from 'expo-haptics';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useApp } from '@/context/AppContext';
-import { MONO_FONT } from '@/constants/colors';
-import { AGENT_ICONS } from '@/constants/agentConfig';
+import { useColors } from '@/hooks/useColors';
+import { useHaptics } from '@/hooks/useHaptics';
+import { MessageBubble } from '@/components/ui/MessageBubble';
+import { TypingIndicator } from '@/components/ui/TypingIndicator';
+import { EmptyState } from '@/components/ui/EmptyState';
 import type { Message } from '@/types';
 
-const QUICK_PROMPTS = ['summarize', 'explain', 'translate', 'code review'];
-
-function MessageBubble({ msg, onCopy, onRetry, isLast }: {
-  msg: Message;
-  onCopy: (text: string) => void;
-  onRetry?: () => void;
-  isLast?: boolean;
-}) {
-  const isUser = msg.role === 'user';
-  return (
-    <View style={[styles.msgRow, isUser && styles.msgRowUser]}>
-      {!isUser && (
-        <View style={styles.avatarBot}>
-          <Feather name="cpu" size={12} color="#8b5cf6" />
-        </View>
-      )}
-      <View style={styles.msgContent}>
-        <View style={[styles.bubble, isUser ? styles.bubbleUser : styles.bubbleBot]}>
-          {!isUser && msg.model && (
-            <Text style={styles.modelLabel}>// {msg.model}</Text>
-          )}
-          <Text style={[styles.msgText, isUser && styles.msgTextUser]} selectable>
-            {msg.content}
-          </Text>
-          {msg.mcpInfo && <Text style={styles.mcpInfo}>{msg.mcpInfo}</Text>}
-          <Text style={[styles.msgTime, isUser && styles.msgTimeUser]}>
-            {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-          </Text>
-        </View>
-        {!isUser && (
-          <View style={styles.msgActions}>
-            <TouchableOpacity
-              style={styles.msgAction}
-              onPress={() => onCopy(msg.content)}
-              hitSlop={8}
-            >
-              <Feather name="copy" size={11} color="#525252" />
-              <Text style={styles.msgActionText}>Copy</Text>
-            </TouchableOpacity>
-            {isLast && onRetry && (
-              <TouchableOpacity style={styles.msgAction} onPress={onRetry} hitSlop={8}>
-                <Feather name="refresh-cw" size={11} color="#525252" />
-                <Text style={styles.msgActionText}>Retry</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        )}
-      </View>
-    </View>
-  );
-}
+const HEADER_HEIGHT = 56;
 
 export default function ChatScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const insets = useSafeAreaInsets();
-  const { state, addMessage, sendMessage, deleteLastAssistantMessage, getActiveModel, updateConversation } = useApp();
+  const colors = useColors();
+  const haptics = useHaptics();
+  const {
+    state, addMessage, deleteMessage, deleteLastAssistantMessage,
+    sendMessage, getActiveModel,
+  } = useApp();
+
   const [input, setInput] = useState('');
-  const [streaming, setStreaming] = useState(false);
-  const [streamText, setStreamText] = useState('');
-  const [copiedId, setCopiedId] = useState<string | null>(null);
-  const flatRef = useRef<FlatList>(null);
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [streamingText, setStreamingText] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const flatListRef = useRef<FlatList<Message>>(null);
 
   const conversation = state.conversations.find(c => c.id === id);
-  const agent = state.agents.find(a => a.id === conversation?.agentId);
-  const hasModel = conversation ? !!getActiveModel(conversation.agentId) : false;
+  const agent = conversation ? state.agents.find(a => a.id === conversation.agentId) : null;
+  const model = agent ? getActiveModel(agent.id) : null;
 
-  const topPad = Platform.OS === 'web' ? 67 : insets.top;
-  const bottomPad = Platform.OS === 'web' ? 34 : insets.bottom;
+  const bottom = Platform.OS === 'web' ? 34 : insets.bottom;
+  const headerTop = Platform.OS === 'web' ? 67 : insets.top;
 
-  const messages = useMemo(
-    () => [...(conversation?.messages ?? [])].reverse(),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [conversation?.messages.length, conversation?.id],
-  );
-
-  const lastAssistantIndex = useMemo(() => {
-    const msgs = conversation?.messages ?? [];
-    for (let i = msgs.length - 1; i >= 0; i--) {
-      if (msgs[i].role === 'assistant') return i;
+  useEffect(() => {
+    if (!conversation) {
+      router.replace('/(tabs)');
     }
-    return -1;
-  }, [conversation?.messages]);
+  }, [conversation]);
 
-  const lastUserContent = useMemo(() => {
-    const msgs = conversation?.messages ?? [];
-    for (let i = msgs.length - 1; i >= 0; i--) {
-      if (msgs[i].role === 'user') return msgs[i].content;
-    }
-    return null;
-  }, [conversation?.messages]);
+  const handleSend = useCallback(async () => {
+    const text = input.trim();
+    if (!text || isStreaming) return;
 
-  const handleSend = useCallback(async (overrideContent?: string) => {
-    const content = overrideContent ?? input.trim();
-    if (!content || streaming || !conversation) return;
-
-    if (!overrideContent) setInput('');
-
-    if (!hasModel) {
-      Alert.alert('No Model', 'Please add an API provider and model in Settings.', [
-        { text: 'Go to Settings', onPress: () => router.push('/settings/providers/') },
-        { text: 'Cancel', style: 'cancel' },
-      ]);
+    if (!model) {
+      Alert.alert(
+        'No Model Selected',
+        'Add an AI provider and enable a model in Settings → Providers.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Open Settings', onPress: () => router.push('/settings/providers/index') },
+        ]
+      );
       return;
     }
 
-    if (state.settings.hapticFeedback) {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    }
+    haptics.medium();
+    setInput('');
+    setError(null);
+    setIsStreaming(true);
+    setStreamingText('');
 
-    if (!overrideContent) {
-      await addMessage(id, { role: 'user', content, timestamp: Date.now() });
-    }
+    await addMessage(id, { role: 'user', content: text, timestamp: Date.now() });
 
-    setStreaming(true);
-    setStreamText('');
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     try {
-      await sendMessage(id, content, (text) => {
-        setStreamText(text);
-      });
+      await sendMessage(
+        id,
+        text,
+        (partial) => setStreamingText(partial),
+        controller.signal,
+      );
+      haptics.light();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      await addMessage(id, {
-        role: 'assistant',
-        content: `// Error: ${msg}`,
-        timestamp: Date.now(),
-      });
+      if ((err as Error)?.name === 'AbortError') {
+        if (streamingText) {
+          await addMessage(id, {
+            role: 'assistant',
+            content: streamingText + ' *(stopped)*',
+            timestamp: Date.now(),
+          });
+        }
+      } else {
+        const msg = err instanceof Error ? err.message : 'Something went wrong. Please try again.';
+        setError(msg);
+        haptics.error();
+        await addMessage(id, {
+          role: 'assistant',
+          content: msg,
+          timestamp: Date.now(),
+          error: true,
+        });
+      }
     } finally {
-      setStreaming(false);
-      setStreamText('');
+      setIsStreaming(false);
+      setStreamingText('');
+      abortRef.current = null;
     }
-  }, [input, streaming, conversation, hasModel, id, addMessage, sendMessage, state.settings.hapticFeedback]);
+  }, [input, isStreaming, model, haptics, addMessage, id, sendMessage, streamingText]);
+
+  const handleStop = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
 
   const handleRetry = useCallback(async () => {
-    if (streaming || !lastUserContent) return;
+    if (!conversation || isStreaming) return;
+    const msgs = conversation.messages;
+    const lastUser = [...msgs].reverse().find(m => m.role === 'user');
+    if (!lastUser) return;
     await deleteLastAssistantMessage(id);
-    await handleSend(lastUserContent);
-  }, [streaming, lastUserContent, deleteLastAssistantMessage, id, handleSend]);
+    setInput(lastUser.content);
+  }, [conversation, isStreaming, deleteLastAssistantMessage, id]);
 
-  const handleCopy = useCallback(async (text: string) => {
-    try {
-      await Share.share({ message: text });
-      if (state.settings.hapticFeedback) {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      }
-    } catch {}
-  }, [state.settings.hapticFeedback]);
+  const handleDeleteMessage = useCallback(async (msgId: string) => {
+    await deleteMessage(id, msgId);
+  }, [deleteMessage, id]);
+
+  const displayMessages: Message[] = conversation?.messages ?? [];
+  const reversedMessages = [...displayMessages].reverse();
 
   if (!conversation) {
-    return (
-      <View style={styles.center}>
-        <Text style={styles.notFound}>// Conversation not found</Text>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backLink}>
-          <Text style={styles.backLinkText}>← Go back</Text>
-        </TouchableOpacity>
-      </View>
-    );
+    return <View style={[styles.container, { backgroundColor: colors.background }]} />;
   }
 
-  const agentFeatherIcon = AGENT_ICONS[agent?.icon ?? 'bot'] ?? 'cpu';
+  const showEmpty = displayMessages.length === 0 && !isStreaming;
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior="padding"
-      keyboardVerticalOffset={0}
-    >
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Header */}
-      <View style={[styles.header, { paddingTop: topPad }]}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} hitSlop={8}>
-          <Feather name="arrow-left" size={18} color="#a1a1a1" />
-        </TouchableOpacity>
-        <View style={styles.agentSelector}>
-          <View style={styles.agentIconBox}>
-            <Feather name={agentFeatherIcon} size={14} color="#8b5cf6" />
+      <View
+        style={[
+          styles.header,
+          {
+            paddingTop: headerTop,
+            backgroundColor: colors.backgroundElevated,
+            borderBottomColor: colors.border,
+          },
+        ]}
+      >
+        <Pressable onPress={() => router.back()} hitSlop={12} style={styles.headerBack}>
+          <Feather name="arrow-left" size={22} color={colors.textMuted} />
+        </Pressable>
+
+        <View style={styles.headerCenter}>
+          <View style={[styles.headerDot, { backgroundColor: colors.primaryMuted, borderColor: colors.primaryBorder }]}>
+            <Feather name="cpu" size={13} color={colors.primary} />
           </View>
           <View>
-            <Text style={styles.agentName}>{agent?.name ?? 'Assistant'}</Text>
-            <Text style={styles.agentModel}>
-              {hasModel ? getActiveModel(conversation.agentId)?.name : '// no model'}
+            <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>
+              {conversation.title}
             </Text>
+            {agent && (
+              <Text style={[styles.headerSub, { color: colors.textDim }]}>
+                {agent.name}
+                {model ? ` · ${model.name}` : ''}
+              </Text>
+            )}
           </View>
         </View>
-        <View style={styles.headerRight}>
-          <TouchableOpacity
-            style={[styles.iconBtn, state.mcpServers.some(s => s.enabled && s.status === 'connected') && styles.iconBtnActive]}
-            hitSlop={8}
-          >
-            <Feather name="server" size={15} color={state.mcpServers.some(s => s.enabled) ? '#4ade80' : '#737373'} />
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.iconBtn}
-            onPress={() => Alert.alert(
-              conversation.title,
-              `Agent: ${agent?.name ?? 'Unknown'}\nMessages: ${conversation.messages.length}\nTokens: ${conversation.totalTokens ?? 0}`,
-            )}
-            hitSlop={8}
-          >
-            <Feather name="more-vertical" size={15} color="#737373" />
-          </TouchableOpacity>
-        </View>
+
+        <Pressable
+          onPress={() =>
+            Alert.alert('Clear Chat', 'Clear all messages in this conversation?', [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Clear',
+                style: 'destructive',
+                onPress: () => {
+                  displayMessages.forEach(m => deleteMessage(id, m.id));
+                  haptics.warning();
+                },
+              },
+            ])
+          }
+          hitSlop={12}
+        >
+          <Feather name="trash-2" size={18} color={colors.textFaint} />
+        </Pressable>
       </View>
 
       {/* Messages */}
-      <FlatList
-        ref={flatRef}
-        data={messages}
-        keyExtractor={item => item.id}
-        renderItem={({ item, index }) => (
-          <MessageBubble
-            msg={item}
-            onCopy={handleCopy}
-            onRetry={handleRetry}
-            isLast={index === 0 && lastAssistantIndex === (conversation.messages.length - 1)}
-          />
-        )}
-        inverted
-        contentContainerStyle={[styles.listContent, { paddingBottom: 8 }]}
-        showsVerticalScrollIndicator={false}
-        keyboardDismissMode="interactive"
-        keyboardShouldPersistTaps="handled"
-        ListHeaderComponent={
-          streaming ? (
-            <View style={styles.streamingRow}>
-              <View style={styles.avatarBot}>
-                <Feather name="cpu" size={12} color="#8b5cf6" />
-              </View>
-              <View style={[styles.bubble, styles.bubbleBot]}>
-                {streamText ? (
-                  <Text style={styles.msgText}>{streamText}</Text>
-                ) : (
-                  <View style={styles.typingDots}>
-                    <ActivityIndicator size="small" color="#8b5cf6" />
-                    <Text style={styles.typingText}>thinking...</Text>
-                  </View>
-                )}
-              </View>
-            </View>
-          ) : null
-        }
-      />
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior="padding"
+        keyboardVerticalOffset={0}
+      >
+        <FlatList
+          ref={flatListRef}
+          data={reversedMessages}
+          keyExtractor={item => item.id}
+          inverted
+          renderItem={({ item, index }) => (
+            <MessageBubble
+              message={item}
+              index={index}
+              onDelete={handleDeleteMessage}
+              onRetry={item.error ? handleRetry : undefined}
+            />
+          )}
+          contentContainerStyle={[
+            styles.messageList,
+            { paddingBottom: 8 },
+            showEmpty && { flex: 1 },
+          ]}
+          showsVerticalScrollIndicator={false}
+          keyboardDismissMode="interactive"
+          keyboardShouldPersistTaps="handled"
+          ListHeaderComponent={
+            isStreaming ? (
+              streamingText ? (
+                <MessageBubble
+                  message={{
+                    id: '__streaming__',
+                    role: 'assistant',
+                    content: streamingText,
+                    timestamp: Date.now(),
+                  }}
+                  index={0}
+                />
+              ) : (
+                <TypingIndicator visible />
+              )
+            ) : null
+          }
+          ListEmptyComponent={
+            showEmpty ? (
+              <EmptyState
+                icon="message-square"
+                title={agent?.name ?? 'Assistant'}
+                subtitle={agent?.description ?? 'Send a message to start chatting'}
+              />
+            ) : null
+          }
+        />
 
-      {/* Input Area */}
-      <View style={[styles.inputArea, { paddingBottom: bottomPad || 16 }]}>
-        <View style={styles.tokenBar}>
-          <Text style={styles.tokenText}>// {conversation.totalTokens ?? 0} tokens</Text>
-          <Text style={styles.tokenText}>{agent?.name ?? 'Assistant'}</Text>
-        </View>
-        <View style={styles.inputRow}>
-          <TextInput
-            style={styles.input}
-            placeholder={`// message ${agent?.name ?? 'assistant'}...`}
-            placeholderTextColor="#404040"
-            value={input}
-            onChangeText={setInput}
-            multiline
-            onSubmitEditing={() => handleSend()}
-            blurOnSubmit={false}
-          />
-          <TouchableOpacity
-            style={[styles.sendBtn, (!input.trim() || streaming) && styles.sendBtnDisabled]}
-            onPress={() => handleSend()}
-            disabled={!input.trim() || streaming}
-            activeOpacity={0.8}
-          >
-            {streaming ? (
-              <ActivityIndicator size="small" color="#fff" />
+        {/* Error banner */}
+        {error && (
+          <View style={[styles.errorBanner, { backgroundColor: colors.destructiveMuted, borderColor: colors.destructiveBorder }]}>
+            <Feather name="alert-circle" size={14} color={colors.destructive} />
+            <Text style={[styles.errorText, { color: colors.destructive }]} numberOfLines={2}>
+              {error}
+            </Text>
+            <Pressable onPress={() => setError(null)} hitSlop={8}>
+              <Feather name="x" size={14} color={colors.destructive} />
+            </Pressable>
+          </View>
+        )}
+
+        {/* Input bar */}
+        <View
+          style={[
+            styles.inputWrap,
+            {
+              backgroundColor: colors.backgroundElevated,
+              borderTopColor: colors.border,
+              paddingBottom: bottom + 8,
+            },
+          ]}
+        >
+          <View style={[styles.inputBox, { backgroundColor: colors.input, borderColor: colors.borderMid }]}>
+            <TextInput
+              style={[styles.textInput, { color: colors.text }]}
+              placeholder="Message…"
+              placeholderTextColor={colors.textFaint}
+              value={input}
+              onChangeText={setInput}
+              multiline
+              maxLength={4000}
+              returnKeyType="send"
+              onSubmitEditing={handleSend}
+              blurOnSubmit={false}
+              editable={!isStreaming}
+            />
+
+            {isStreaming ? (
+              <Pressable onPress={handleStop} style={[styles.sendBtn, { backgroundColor: colors.destructive }]}>
+                <Feather name="square" size={16} color="#fff" />
+              </Pressable>
             ) : (
-              <Feather name="arrow-up" size={16} color="#fff" />
+              <Pressable
+                onPress={handleSend}
+                disabled={!input.trim()}
+                style={({ pressed }) => [
+                  styles.sendBtn,
+                  {
+                    backgroundColor: input.trim() ? colors.primary : colors.chip,
+                    opacity: pressed ? 0.8 : 1,
+                  },
+                ]}
+              >
+                <Feather name="send" size={16} color={input.trim() ? '#fff' : colors.textFaint} />
+              </Pressable>
             )}
-          </TouchableOpacity>
+          </View>
         </View>
-        <View style={styles.quickPromptsRow}>
-          {QUICK_PROMPTS.map(p => (
-            <TouchableOpacity
-              key={p}
-              style={styles.quickChip}
-              onPress={() => setInput(p)}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.quickChipText}>// {p}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      </View>
-    </KeyboardAvoidingView>
+      </KeyboardAvoidingView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0d0d0d' },
-  center: { flex: 1, backgroundColor: '#0d0d0d', justifyContent: 'center', alignItems: 'center', gap: 12 },
-  notFound: { fontFamily: MONO_FONT, color: '#737373', fontSize: 14 },
-  backLink: { padding: 8 },
-  backLinkText: { fontFamily: MONO_FONT, color: '#8b5cf6', fontSize: 13 },
+  container: { flex: 1 },
   header: {
-    flexDirection: 'row', alignItems: 'center', gap: 10,
-    paddingHorizontal: 12, paddingBottom: 10,
-    borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.08)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    gap: 10,
   },
-  backBtn: {
-    width: 32, height: 32, borderRadius: 16,
-    backgroundColor: '#171717', justifyContent: 'center', alignItems: 'center',
+  headerBack: { flexShrink: 0 },
+  headerCenter: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    minWidth: 0,
   },
-  agentSelector: {
-    flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8,
-    backgroundColor: '#171717', borderRadius: 10,
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
-    paddingHorizontal: 10, paddingVertical: 6,
+  headerDot: {
+    width: 30,
+    height: 30,
+    borderRadius: 9,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
   },
-  agentIconBox: {
-    width: 28, height: 28, borderRadius: 8,
-    backgroundColor: 'rgba(139,92,246,0.15)', justifyContent: 'center', alignItems: 'center',
+  headerTitle: { fontSize: 15, fontFamily: 'Inter_600SemiBold' },
+  headerSub: { fontSize: 11, fontFamily: 'Inter_400Regular' },
+  messageList: { paddingTop: 12, gap: 0 },
+  inputWrap: {
+    paddingHorizontal: 12,
+    paddingTop: 10,
+    borderTopWidth: 1,
   },
-  agentName: { fontFamily: MONO_FONT, color: '#f5f5f5', fontSize: 13, fontWeight: '600' },
-  agentModel: { fontFamily: MONO_FONT, color: '#737373', fontSize: 10 },
-  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  iconBtn: {
-    width: 32, height: 32, borderRadius: 16,
-    backgroundColor: '#171717', justifyContent: 'center', alignItems: 'center',
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
+  inputBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    borderRadius: 20,
+    borderWidth: 1,
+    paddingLeft: 14,
+    paddingRight: 6,
+    paddingVertical: 6,
+    gap: 8,
+    minHeight: 46,
   },
-  iconBtnActive: { borderColor: 'rgba(74,222,128,0.3)' },
-  listContent: { paddingHorizontal: 12, paddingTop: 12 },
-  msgRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, marginBottom: 16 },
-  msgRowUser: { flexDirection: 'row-reverse' },
-  avatarBot: {
-    width: 28, height: 28, borderRadius: 14,
-    backgroundColor: '#171717', justifyContent: 'center', alignItems: 'center',
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)', flexShrink: 0,
-  },
-  msgContent: { flex: 1, gap: 4 },
-  bubble: {
-    borderRadius: 18, paddingHorizontal: 12, paddingVertical: 8,
-    maxWidth: '90%',
-  },
-  bubbleUser: {
-    backgroundColor: 'rgba(139,92,246,0.15)',
-    borderWidth: 1, borderColor: 'rgba(139,92,246,0.25)',
-    borderBottomRightRadius: 4, alignSelf: 'flex-end',
-  },
-  bubbleBot: {
-    backgroundColor: '#171717',
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
-    borderBottomLeftRadius: 4, alignSelf: 'flex-start',
-  },
-  modelLabel: { fontFamily: MONO_FONT, color: '#8b5cf6', fontSize: 9, letterSpacing: 1, marginBottom: 4 },
-  msgText: { fontFamily: MONO_FONT, color: '#e5e5e5', fontSize: 13, lineHeight: 20 },
-  msgTextUser: { color: '#f5f5f5' },
-  mcpInfo: { fontFamily: MONO_FONT, color: '#737373', fontSize: 9, marginTop: 4 },
-  msgTime: { fontFamily: MONO_FONT, color: '#525252', fontSize: 9, textAlign: 'right', marginTop: 4 },
-  msgTimeUser: { textAlign: 'right' },
-  msgActions: { flexDirection: 'row', gap: 12, paddingLeft: 4 },
-  msgAction: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 2 },
-  msgActionText: { fontFamily: MONO_FONT, color: '#525252', fontSize: 10 },
-  streamingRow: {
-    flexDirection: 'row', alignItems: 'flex-end', gap: 8, marginBottom: 16,
-  },
-  typingDots: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 4 },
-  typingText: { fontFamily: MONO_FONT, color: '#525252', fontSize: 10 },
-  inputArea: {
-    borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.08)',
-    backgroundColor: '#0d0d0d', paddingTop: 8, paddingHorizontal: 12, gap: 8,
-  },
-  tokenBar: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 4 },
-  tokenText: { fontFamily: MONO_FONT, color: '#404040', fontSize: 9 },
-  inputRow: {
-    flexDirection: 'row', alignItems: 'flex-end', gap: 8,
-    backgroundColor: '#171717', borderRadius: 14,
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
-    paddingHorizontal: 12, paddingVertical: 8,
-  },
-  input: {
-    flex: 1, fontFamily: MONO_FONT, color: '#f5f5f5', fontSize: 13,
-    maxHeight: 120, minHeight: 20, lineHeight: 20,
+  textInput: {
+    flex: 1,
+    fontSize: 15,
+    fontFamily: 'Inter_400Regular',
+    maxHeight: 120,
+    paddingTop: 6,
+    paddingBottom: 6,
+    lineHeight: 20,
   },
   sendBtn: {
-    width: 32, height: 32, borderRadius: 10,
-    backgroundColor: '#8b5cf6', justifyContent: 'center', alignItems: 'center',
-    marginBottom: 0,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
   },
-  sendBtnDisabled: { opacity: 0.4 },
-  quickPromptsRow: { flexDirection: 'row', gap: 6, paddingBottom: 4 },
-  quickChip: {
-    paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999,
-    backgroundColor: '#171717', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginHorizontal: 12,
+    marginBottom: 8,
+    padding: 10,
+    borderRadius: 10,
+    borderWidth: 1,
   },
-  quickChipText: { fontFamily: MONO_FONT, color: '#737373', fontSize: 10 },
+  errorText: {
+    flex: 1,
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+  },
 });

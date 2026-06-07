@@ -1,12 +1,19 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import type { Agent, AppSettings, AppState, Conversation, MCPServer, Message, Model, Provider } from '@/types';
+import React, {
+  createContext, useCallback, useContext, useEffect,
+  useMemo, useRef, useState,
+} from 'react';
+import type {
+  Agent, AppSettings, AppState, Conversation,
+  MCPServer, Message, Model, Provider,
+} from '@/types';
 import { DEFAULT_ANTHROPIC_MODELS, DEFAULT_OPENAI_MODELS } from '@/types';
+import { loadState, saveState } from '@/utils/storage';
+import { logger } from '@/services/logger';
+import { streamMessage, buildMessages } from '@/services/aiService';
 
-const STORAGE_KEY = '@neuralkey:appstate';
-const PERSIST_DEBOUNCE_MS = 800;
+const PERSIST_DEBOUNCE_MS = 600;
 
-const DEFAULT_SETTINGS: AppSettings = {
+export const DEFAULT_SETTINGS: AppSettings = {
   persistentMemory: true,
   sessionMemory: true,
   autoSummarize: true,
@@ -15,7 +22,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   onboardingComplete: false,
 };
 
-const DEFAULT_AGENT: Agent = {
+export const DEFAULT_AGENT: Agent = {
   id: 'default-assistant',
   name: 'Assistant',
   description: 'General purpose AI assistant',
@@ -30,33 +37,30 @@ const DEFAULT_AGENT: Agent = {
 };
 
 function genId(): string {
-  return Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 11);
 }
 
 interface AppContextValue {
   state: AppState;
   isLoaded: boolean;
-  // Providers
   addProvider: (p: Omit<Provider, 'id' | 'createdAt'>) => Promise<Provider>;
   updateProvider: (id: string, updates: Partial<Provider>) => Promise<void>;
   deleteProvider: (id: string) => Promise<void>;
   toggleProvider: (id: string) => Promise<void>;
-  // Models
   addModel: (m: Omit<Model, 'id'>) => Promise<Model>;
   updateModel: (id: string, updates: Partial<Model>) => Promise<void>;
   deleteModel: (id: string) => Promise<void>;
   toggleModel: (id: string) => Promise<void>;
-  // Agents
+  clearAllModels: () => Promise<void>;
   addAgent: (a: Omit<Agent, 'id'>) => Promise<Agent>;
   updateAgent: (id: string, updates: Partial<Agent>) => Promise<void>;
   deleteAgent: (id: string) => Promise<void>;
   toggleAgent: (id: string) => Promise<void>;
-  // MCP Servers
+  clearCustomAgents: () => Promise<void>;
   addMCPServer: (s: Omit<MCPServer, 'id' | 'status'>) => Promise<MCPServer>;
   updateMCPServer: (id: string, updates: Partial<MCPServer>) => Promise<void>;
   deleteMCPServer: (id: string) => Promise<void>;
   toggleMCPServer: (id: string) => Promise<void>;
-  // Conversations
   createConversation: (agentId: string, title?: string) => Promise<Conversation>;
   updateConversation: (id: string, updates: Partial<Conversation>) => Promise<void>;
   deleteConversation: (id: string) => Promise<void>;
@@ -64,99 +68,92 @@ interface AppContextValue {
   deleteMessage: (conversationId: string, messageId: string) => Promise<void>;
   deleteLastAssistantMessage: (conversationId: string) => Promise<void>;
   deleteAllConversations: () => Promise<void>;
-  // Settings
   updateSettings: (updates: Partial<AppSettings>) => Promise<void>;
   completeOnboarding: () => Promise<void>;
   resetAllSettings: () => Promise<void>;
-  // Data
   clearAllData: () => Promise<void>;
-  // AI
-  sendMessage: (conversationId: string, content: string, onChunk?: (text: string) => void) => Promise<void>;
+  sendMessage: (
+    conversationId: string,
+    content: string,
+    onChunk?: (text: string) => void,
+    signal?: AbortSignal,
+  ) => Promise<void>;
   getActiveModel: (agentId: string) => Model | null;
   getActiveProvider: (model: Model) => Provider | null;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
 
+const INITIAL_STATE: AppState = {
+  providers: [],
+  models: [],
+  agents: [DEFAULT_AGENT],
+  mcpServers: [],
+  conversations: [],
+  settings: DEFAULT_SETTINGS,
+};
+
 export function AppContextProvider({ children }: { children: React.ReactNode }) {
-  const [state, setState] = useState<AppState>({
-    providers: [],
-    models: [],
-    agents: [DEFAULT_AGENT],
-    mcpServers: [],
-    conversations: [],
-    settings: DEFAULT_SETTINGS,
-  });
+  const [state, setState] = useState<AppState>(INITIAL_STATE);
   const [isLoaded, setIsLoaded] = useState(false);
   const stateRef = useRef(state);
   stateRef.current = state;
-
-  // Debounced persist timer
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     (async () => {
-      try {
-        const raw = await AsyncStorage.getItem(STORAGE_KEY);
-        if (raw) {
-          const saved = JSON.parse(raw) as Partial<AppState>;
-          setState(prev => ({
-            providers: saved.providers ?? prev.providers,
-            models: saved.models ?? prev.models,
-            agents: saved.agents?.length ? saved.agents : prev.agents,
-            mcpServers: saved.mcpServers ?? prev.mcpServers,
-            conversations: saved.conversations ?? prev.conversations,
-            settings: { ...prev.settings, ...(saved.settings ?? {}) },
-          }));
-        }
-      } catch {}
+      const saved = await loadState<Partial<AppState>>();
+      if (saved) {
+        setState(prev => ({
+          providers: saved.providers ?? prev.providers,
+          models: saved.models ?? prev.models,
+          agents: saved.agents?.length ? saved.agents : prev.agents,
+          mcpServers: saved.mcpServers ?? prev.mcpServers,
+          conversations: saved.conversations ?? prev.conversations,
+          settings: { ...prev.settings, ...(saved.settings ?? {}) },
+        }));
+      }
       setIsLoaded(true);
+      logger.info('AppState loaded from storage');
     })();
   }, []);
 
-  const persistImmediate = useCallback(async (newState: AppState) => {
-    try {
-      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(newState));
-    } catch {}
+  const persist = useCallback((newState: AppState, immediate = false) => {
+    if (immediate) {
+      saveState(newState);
+      return;
+    }
+    if (persistTimer.current) clearTimeout(persistTimer.current);
+    persistTimer.current = setTimeout(() => saveState(newState), PERSIST_DEBOUNCE_MS);
   }, []);
 
-  const persistDebounced = useCallback((newState: AppState) => {
-    if (persistTimer.current) clearTimeout(persistTimer.current);
-    persistTimer.current = setTimeout(() => {
-      persistImmediate(newState);
-    }, PERSIST_DEBOUNCE_MS);
-  }, [persistImmediate]);
-
-  const updateState = useCallback((updater: (prev: AppState) => AppState, immediate = false) => {
+  const updateState = useCallback((
+    updater: (prev: AppState) => AppState,
+    immediate = false,
+  ) => {
     setState(prev => {
       const next = updater(prev);
-      if (immediate) {
-        persistImmediate(next);
-      } else {
-        persistDebounced(next);
-      }
+      persist(next, immediate);
       return next;
     });
-  }, [persistImmediate, persistDebounced]);
+  }, [persist]);
 
-  // Providers
   const addProvider = useCallback(async (p: Omit<Provider, 'id' | 'createdAt'>): Promise<Provider> => {
     const provider: Provider = { ...p, id: genId(), createdAt: Date.now() };
     const defaultModels = p.type === 'openai'
       ? DEFAULT_OPENAI_MODELS
       : p.type === 'anthropic'
-      ? DEFAULT_ANTHROPIC_MODELS
-      : [];
+        ? DEFAULT_ANTHROPIC_MODELS
+        : [];
     const newModels: Model[] = defaultModels.map(m => ({
-      ...m,
-      id: genId(),
-      providerId: provider.id,
+      ...m, id: genId(), providerId: provider.id,
     }));
     updateState(prev => ({
       ...prev,
       providers: [...prev.providers, provider],
       models: [...prev.models, ...newModels],
     }), true);
+    logger.info('Provider added', { name: p.name, type: p.type });
     return provider;
   }, [updateState]);
 
@@ -182,7 +179,6 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
     }), true);
   }, [updateState]);
 
-  // Models
   const addModel = useCallback(async (m: Omit<Model, 'id'>): Promise<Model> => {
     const model: Model = { ...m, id: genId() };
     updateState(prev => ({ ...prev, models: [...prev.models, model] }), true);
@@ -207,7 +203,10 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
     }), true);
   }, [updateState]);
 
-  // Agents
+  const clearAllModels = useCallback(async () => {
+    updateState(prev => ({ ...prev, models: [], providers: [] }), true);
+  }, [updateState]);
+
   const addAgent = useCallback(async (a: Omit<Agent, 'id'>): Promise<Agent> => {
     const agent: Agent = { ...a, id: genId() };
     updateState(prev => ({ ...prev, agents: [...prev.agents, agent] }), true);
@@ -233,7 +232,13 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
     }), true);
   }, [updateState]);
 
-  // MCP Servers
+  const clearCustomAgents = useCallback(async () => {
+    updateState(prev => ({
+      ...prev,
+      agents: prev.agents.filter(a => a.id === 'default-assistant'),
+    }), true);
+  }, [updateState]);
+
   const addMCPServer = useCallback(async (s: Omit<MCPServer, 'id' | 'status'>): Promise<MCPServer> => {
     const server: MCPServer = { ...s, id: genId(), status: 'disconnected' };
     updateState(prev => ({ ...prev, mcpServers: [...prev.mcpServers, server] }), true);
@@ -258,7 +263,6 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
     }), true);
   }, [updateState]);
 
-  // Conversations
   const createConversation = useCallback(async (agentId: string, title?: string): Promise<Conversation> => {
     const conv: Conversation = {
       id: genId(),
@@ -281,10 +285,16 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
   }, [updateState]);
 
   const deleteConversation = useCallback(async (id: string) => {
-    updateState(prev => ({ ...prev, conversations: prev.conversations.filter(c => c.id !== id) }), true);
+    updateState(prev => ({
+      ...prev,
+      conversations: prev.conversations.filter(c => c.id !== id),
+    }), true);
   }, [updateState]);
 
-  const addMessage = useCallback(async (conversationId: string, msg: Omit<Message, 'id'>): Promise<Message> => {
+  const addMessage = useCallback(async (
+    conversationId: string,
+    msg: Omit<Message, 'id'>,
+  ): Promise<Message> => {
     const message: Message = { ...msg, id: genId() };
     updateState(prev => ({
       ...prev,
@@ -292,7 +302,7 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
         if (c.id !== conversationId) return c;
         const msgs = [...c.messages, message];
         const title = c.messages.length === 0 && msg.role === 'user'
-          ? msg.content.slice(0, 50) + (msg.content.length > 50 ? '...' : '')
+          ? msg.content.slice(0, 52).trimEnd() + (msg.content.length > 52 ? '…' : '')
           : c.title;
         return { ...c, messages: msgs, updatedAt: Date.now(), title };
       }),
@@ -317,10 +327,7 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
         if (c.id !== conversationId) return c;
         const msgs = [...c.messages];
         for (let i = msgs.length - 1; i >= 0; i--) {
-          if (msgs[i].role === 'assistant') {
-            msgs.splice(i, 1);
-            break;
-          }
+          if (msgs[i].role === 'assistant') { msgs.splice(i, 1); break; }
         }
         return { ...c, messages: msgs, updatedAt: Date.now() };
       }),
@@ -331,13 +338,15 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
     updateState(prev => ({ ...prev, conversations: [] }), true);
   }, [updateState]);
 
-  // Settings
   const updateSettings = useCallback(async (updates: Partial<AppSettings>) => {
     updateState(prev => ({ ...prev, settings: { ...prev.settings, ...updates } }), true);
   }, [updateState]);
 
   const completeOnboarding = useCallback(async () => {
-    updateState(prev => ({ ...prev, settings: { ...prev.settings, onboardingComplete: true } }), true);
+    updateState(prev => ({
+      ...prev,
+      settings: { ...prev.settings, onboardingComplete: true },
+    }), true);
   }, [updateState]);
 
   const resetAllSettings = useCallback(async () => {
@@ -346,18 +355,14 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
 
   const clearAllData = useCallback(async () => {
     const newState: AppState = {
-      providers: [],
-      models: [],
-      agents: [DEFAULT_AGENT],
-      mcpServers: [],
-      conversations: [],
+      ...INITIAL_STATE,
       settings: { ...DEFAULT_SETTINGS, onboardingComplete: true },
     };
     setState(newState);
-    await persistImmediate(newState);
-  }, [persistImmediate]);
+    await saveState(newState);
+    logger.info('All data cleared');
+  }, []);
 
-  // AI helpers
   const getActiveModel = useCallback((agentId: string): Model | null => {
     const agent = stateRef.current.agents.find(a => a.id === agentId);
     if (!agent?.modelId) return null;
@@ -372,133 +377,28 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
     conversationId: string,
     content: string,
     onChunk?: (text: string) => void,
+    signal?: AbortSignal,
   ) => {
     const conversation = stateRef.current.conversations.find(c => c.id === conversationId);
-    if (!conversation) return;
-
+    if (!conversation) throw new Error('Conversation not found');
     const agent = stateRef.current.agents.find(a => a.id === conversation.agentId);
-    if (!agent) return;
-
+    if (!agent) throw new Error('Agent not found');
     const model = getActiveModel(conversation.agentId);
-    if (!model) throw new Error('No model configured. Please add a provider and model in Settings.');
-
+    if (!model) throw new Error('No model configured. Add a provider in Settings.');
     const provider = getActiveProvider(model);
     if (!provider) throw new Error('Provider not found or disabled.');
 
-    const messages = conversation.messages
-      .filter(m => m.role !== 'system')
-      .map(m => ({ role: m.role, content: m.content }));
+    const messages = buildMessages(conversation.messages, content, agent);
 
-    if (agent.systemPrompt) {
-      messages.unshift({ role: 'system' as const, content: agent.systemPrompt });
-    }
-    messages.push({ role: 'user' as const, content });
-
-    let responseText = '';
-
-    if (provider.type === 'anthropic') {
-      const res = await fetch(`${provider.baseUrl ?? 'https://api.anthropic.com'}/v1/messages`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': provider.apiKey,
-          'anthropic-version': '2023-06-01',
-        },
-        body: JSON.stringify({
-          model: model.modelId,
-          max_tokens: agent.maxTokens,
-          stream: true,
-          messages: messages.filter(m => m.role !== 'system'),
-          system: agent.systemPrompt || undefined,
-        }),
-      });
-
-      if (!res.ok) {
-        const err = await res.text();
-        let friendly = `API error ${res.status}`;
-        try {
-          const parsed = JSON.parse(err);
-          friendly = parsed?.error?.message ?? friendly;
-        } catch {}
-        throw new Error(friendly);
-      }
-
-      const reader = res.body?.getReader();
-      if (!reader) throw new Error('No response body from API');
-      const decoder = new TextDecoder();
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        const text = decoder.decode(value, { stream: true });
-        for (const line of text.split('\n')) {
-          if (!line.startsWith('data:')) continue;
-          const data = line.slice(5).trim();
-          if (data === '[DONE]' || !data) continue;
-          try {
-            const parsed = JSON.parse(data);
-            if (parsed.type === 'content_block_delta' && parsed.delta?.text) {
-              responseText += parsed.delta.text;
-              onChunk?.(responseText);
-            }
-          } catch {}
-        }
-      }
-    } else {
-      const baseUrl = provider.baseUrl ?? (
-        provider.type === 'gemini'
-          ? 'https://generativelanguage.googleapis.com/v1beta/openai'
-          : 'https://api.openai.com/v1'
-      );
-
-      const res = await fetch(`${baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${provider.apiKey}`,
-        },
-        body: JSON.stringify({
-          model: model.modelId,
-          messages,
-          stream: true,
-          temperature: agent.temperature,
-          max_tokens: agent.maxTokens,
-        }),
-      });
-
-      if (!res.ok) {
-        const err = await res.text();
-        let friendly = `API error ${res.status}`;
-        try {
-          const parsed = JSON.parse(err);
-          friendly = parsed?.error?.message ?? friendly;
-        } catch {}
-        throw new Error(friendly);
-      }
-
-      const reader = res.body?.getReader();
-      if (!reader) throw new Error('No response body from API');
-      const decoder = new TextDecoder();
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        const text = decoder.decode(value, { stream: true });
-        for (const line of text.split('\n')) {
-          if (!line.startsWith('data:')) continue;
-          const data = line.slice(5).trim();
-          if (data === '[DONE]' || !data) continue;
-          try {
-            const parsed = JSON.parse(data);
-            const delta = parsed.choices?.[0]?.delta?.content;
-            if (delta) {
-              responseText += delta;
-              onChunk?.(responseText);
-            }
-          } catch {}
-        }
-      }
-    }
+    const responseText = await streamMessage({
+      conversationId,
+      messages,
+      agent,
+      model,
+      provider,
+      onChunk: onChunk ?? (() => {}),
+      signal,
+    });
 
     if (responseText) {
       await addMessage(conversationId, {
@@ -511,27 +411,24 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
   }, [getActiveModel, getActiveProvider, addMessage]);
 
   const value = useMemo<AppContextValue>(() => ({
-    state,
-    isLoaded,
+    state, isLoaded,
     addProvider, updateProvider, deleteProvider, toggleProvider,
-    addModel, updateModel, deleteModel, toggleModel,
-    addAgent, updateAgent, deleteAgent, toggleAgent,
+    addModel, updateModel, deleteModel, toggleModel, clearAllModels,
+    addAgent, updateAgent, deleteAgent, toggleAgent, clearCustomAgents,
     addMCPServer, updateMCPServer, deleteMCPServer, toggleMCPServer,
-    createConversation, updateConversation, deleteConversation, addMessage,
-    deleteMessage, deleteLastAssistantMessage, deleteAllConversations,
-    updateSettings, completeOnboarding, resetAllSettings,
-    clearAllData,
+    createConversation, updateConversation, deleteConversation,
+    addMessage, deleteMessage, deleteLastAssistantMessage, deleteAllConversations,
+    updateSettings, completeOnboarding, resetAllSettings, clearAllData,
     sendMessage, getActiveModel, getActiveProvider,
   }), [
     state, isLoaded,
     addProvider, updateProvider, deleteProvider, toggleProvider,
-    addModel, updateModel, deleteModel, toggleModel,
-    addAgent, updateAgent, deleteAgent, toggleAgent,
+    addModel, updateModel, deleteModel, toggleModel, clearAllModels,
+    addAgent, updateAgent, deleteAgent, toggleAgent, clearCustomAgents,
     addMCPServer, updateMCPServer, deleteMCPServer, toggleMCPServer,
-    createConversation, updateConversation, deleteConversation, addMessage,
-    deleteMessage, deleteLastAssistantMessage, deleteAllConversations,
-    updateSettings, completeOnboarding, resetAllSettings,
-    clearAllData,
+    createConversation, updateConversation, deleteConversation,
+    addMessage, deleteMessage, deleteLastAssistantMessage, deleteAllConversations,
+    updateSettings, completeOnboarding, resetAllSettings, clearAllData,
     sendMessage, getActiveModel, getActiveProvider,
   ]);
 

@@ -11,24 +11,21 @@
     "splash": {
       "image": "./assets/images/icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#0d0d0d"
+      "backgroundColor": "#0a0a0a"
     },
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.neuralkey.app"
     },
     "android": {
-      "backgroundColor": "#0d0d0d",
-      "package": "com.neuralkey.app",
-      "versionCode": 1,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/icon.png",
-        "backgroundColor": "#0d0d0d"
-      }
+        "backgroundColor": "#0a0a0a"
+      },
+      "package": "com.neuralkey.app"
     },
     "web": {
-      "favicon": "./assets/images/icon.png",
-      "backgroundColor": "#0d0d0d"
+      "favicon": "./assets/images/icon.png"
     },
     "plugins": [
       [

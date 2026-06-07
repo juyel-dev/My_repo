@@ -56,6 +56,7 @@ export interface Message {
   tokens?: number;
   model?: string;
   mcpInfo?: string;
+  error?: boolean;
 }
 
 export interface Conversation {
