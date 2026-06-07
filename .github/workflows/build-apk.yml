@@ -1,102 +1,88 @@
 name: Build Android APK
 
-on:
-  push:
-    branches: [main, master]
-  workflow_dispatch:
+  on:
+    push:
+      branches: [main, master]
+    workflow_dispatch:
 
-jobs:
-  build:
-    name: Build APK
-    runs-on: ubuntu-latest
+  jobs:
+    build:
+      name: Build APK
+      runs-on: ubuntu-latest
 
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      steps:
+        - name: Checkout repository
+          uses: actions/checkout@v4
 
-      - name: Setup Node.js 20
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
+        - name: Setup Java 17
+          uses: actions/setup-java@v4
+          with:
+            distribution: temurin
+            java-version: '17'
 
-      - name: Setup Java 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '17'
+        - name: Setup Node.js 20
+          uses: actions/setup-node@v4
+          with:
+            node-version: '20'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          accept-android-sdk-licenses: true
+        - name: Install dependencies
+          run: npm install --legacy-peer-deps
 
-      - name: Install dependencies
-        run: npm install --legacy-peer-deps
+        - name: Generate Android native project
+          run: npx expo prebuild --platform android --no-install
+          env:
+            EXPO_NO_DOTENV: '1'
 
-      - name: Install EAS CLI
-        run: npm install -g eas-cli
+        - name: Build Debug APK
+          run: |
+            cd android
+            chmod +x gradlew
+            ./gradlew assembleDebug --no-daemon -Dorg.gradle.jvmargs=-Xmx4g
 
-      - name: Generate native Android project
-        run: npx expo prebuild --platform android --no-install
-        env:
-          EXPO_NO_DOTENV: 1
+        - name: Find APK
+          id: apk
+          run: |
+            APK=$(find android/app/build/outputs/apk/debug -name "*.apk" | head -1)
+            VERSION=$(node -p "require('./package.json').version")
+            NAME="NeuralKey-v${VERSION}-build${{ github.run_number }}.apk"
+            cp "$APK" "$NAME"
+            echo "name=$NAME" >> $GITHUB_OUTPUT
 
-      - name: Build Debug APK (no signing required)
-        run: |
-          cd android
-          chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
-        env:
-          GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx4g"
+        - name: Upload APK artifact
+          uses: actions/upload-artifact@v4
+          with:
+            name: ${{ steps.apk.outputs.name }}
+            path: ${{ steps.apk.outputs.name }}
+            retention-days: 30
 
-      - name: Get version info
-        id: version
-        run: |
-          VERSION=$(node -p "require('./package.json').version")
-          BUILD_NUM=${{ github.run_number }}
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "apk_name=NeuralKey-v${VERSION}-build${BUILD_NUM}-debug.apk" >> $GITHUB_OUTPUT
+        - name: Create GitHub Release
+          uses: softprops/action-gh-release@v2
+          with:
+            tag_name: v1.0.${{ github.run_number }}
+            name: "NeuralKey v1.0.${{ github.run_number }}"
+            body: |
+              ## NeuralKey APK — Build ${{ github.run_number }}
 
-      - name: Rename APK
-        run: |
-          APK_PATH=$(find android/app/build/outputs/apk/debug -name "*.apk" | head -1)
-          cp "$APK_PATH" "${{ steps.version.outputs.apk_name }}"
-          echo "APK_PATH=${{ steps.version.outputs.apk_name }}" >> $GITHUB_ENV
+              Built from commit `${{ github.sha }}`
 
-      - name: Upload APK as artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ steps.version.outputs.apk_name }}
-          path: ${{ steps.version.outputs.apk_name }}
-          retention-days: 30
+              ### Changes in this build
+              - Working Copy & Retry buttons in chat
+              - Test Endpoint for API provider validation
+              - Agent filter chips and search bar in chat list
+              - Centralized constants — eliminates duplication
+              - Debounced state persistence (800ms)
+              - Smart QueryClient (staleTime, smart retry)
+              - EAS build config ready
 
-      - name: Create GitHub Release with APK
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ steps.version.outputs.version }}-build${{ github.run_number }}
-          name: "NeuralKey v${{ steps.version.outputs.version }} (Build ${{ github.run_number }})"
-          body: |
-            ## NeuralKey APK
+              ### How to install
+              1. Download the APK file below
+              2. On Android: go to **Settings → Install unknown apps** and enable it for your browser/Files app
+              3. Tap the downloaded APK to install
 
-            Automated build from commit `${{ github.sha }}`
-
-            ### What's included
-            - BYOK AI chat client (OpenAI, Anthropic, Gemini, Custom/Ollama)
-            - Working Copy & Retry buttons in chat
-            - Test Endpoint for provider validation
-            - Agent filter chips and search
-            - Centralized constants & improved architecture
-            - Debounced state persistence
-
-            ### Installation
-            1. Download `${{ steps.version.outputs.apk_name }}`
-            2. Enable **Install from Unknown Sources** on Android
-            3. Install the APK
-
-            > **Note:** This is a debug APK — safe to install for personal use. A signed release APK requires EAS Build with an Expo account.
-          files: ${{ steps.version.outputs.apk_name }}
-          draft: false
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              > This is an unsigned debug APK. For a signed production APK, use `eas build --platform android --profile production`.
+            files: ${{ steps.apk.outputs.name }}
+            draft: false
+            prerelease: false
+          env:
+            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  
