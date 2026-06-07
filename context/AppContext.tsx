@@ -4,6 +4,7 @@ import type { Agent, AppSettings, AppState, Conversation, MCPServer, Message, Mo
 import { DEFAULT_ANTHROPIC_MODELS, DEFAULT_OPENAI_MODELS } from '@/types';
 
 const STORAGE_KEY = '@neuralkey:appstate';
+const PERSIST_DEBOUNCE_MS = 800;
 
 const DEFAULT_SETTINGS: AppSettings = {
   persistentMemory: true,
@@ -60,6 +61,8 @@ interface AppContextValue {
   updateConversation: (id: string, updates: Partial<Conversation>) => Promise<void>;
   deleteConversation: (id: string) => Promise<void>;
   addMessage: (conversationId: string, msg: Omit<Message, 'id'>) => Promise<Message>;
+  deleteMessage: (conversationId: string, messageId: string) => Promise<void>;
+  deleteLastAssistantMessage: (conversationId: string) => Promise<void>;
   deleteAllConversations: () => Promise<void>;
   // Settings
   updateSettings: (updates: Partial<AppSettings>) => Promise<void>;
@@ -88,6 +91,9 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
   const stateRef = useRef(state);
   stateRef.current = state;
 
+  // Debounced persist timer
+  const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
     (async () => {
       try {
@@ -108,19 +114,30 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
     })();
   }, []);
 
-  const persist = useCallback(async (newState: AppState) => {
+  const persistImmediate = useCallback(async (newState: AppState) => {
     try {
       await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(newState));
     } catch {}
   }, []);
 
-  const updateState = useCallback((updater: (prev: AppState) => AppState) => {
+  const persistDebounced = useCallback((newState: AppState) => {
+    if (persistTimer.current) clearTimeout(persistTimer.current);
+    persistTimer.current = setTimeout(() => {
+      persistImmediate(newState);
+    }, PERSIST_DEBOUNCE_MS);
+  }, [persistImmediate]);
+
+  const updateState = useCallback((updater: (prev: AppState) => AppState, immediate = false) => {
     setState(prev => {
       const next = updater(prev);
-      persist(next);
+      if (immediate) {
+        persistImmediate(next);
+      } else {
+        persistDebounced(next);
+      }
       return next;
     });
-  }, [persist]);
+  }, [persistImmediate, persistDebounced]);
 
   // Providers
   const addProvider = useCallback(async (p: Omit<Provider, 'id' | 'createdAt'>): Promise<Provider> => {
@@ -139,7 +156,7 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
       ...prev,
       providers: [...prev.providers, provider],
       models: [...prev.models, ...newModels],
-    }));
+    }), true);
     return provider;
   }, [updateState]);
 
@@ -147,7 +164,7 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
     updateState(prev => ({
       ...prev,
       providers: prev.providers.map(p => p.id === id ? { ...p, ...updates } : p),
-    }));
+    }), true);
   }, [updateState]);
 
   const deleteProvider = useCallback(async (id: string) => {
@@ -155,20 +172,20 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
       ...prev,
       providers: prev.providers.filter(p => p.id !== id),
       models: prev.models.filter(m => m.providerId !== id),
-    }));
+    }), true);
   }, [updateState]);
 
   const toggleProvider = useCallback(async (id: string) => {
     updateState(prev => ({
       ...prev,
       providers: prev.providers.map(p => p.id === id ? { ...p, enabled: !p.enabled } : p),
-    }));
+    }), true);
   }, [updateState]);
 
   // Models
   const addModel = useCallback(async (m: Omit<Model, 'id'>): Promise<Model> => {
     const model: Model = { ...m, id: genId() };
-    updateState(prev => ({ ...prev, models: [...prev.models, model] }));
+    updateState(prev => ({ ...prev, models: [...prev.models, model] }), true);
     return model;
   }, [updateState]);
 
@@ -176,24 +193,24 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
     updateState(prev => ({
       ...prev,
       models: prev.models.map(m => m.id === id ? { ...m, ...updates } : m),
-    }));
+    }), true);
   }, [updateState]);
 
   const deleteModel = useCallback(async (id: string) => {
-    updateState(prev => ({ ...prev, models: prev.models.filter(m => m.id !== id) }));
+    updateState(prev => ({ ...prev, models: prev.models.filter(m => m.id !== id) }), true);
   }, [updateState]);
 
   const toggleModel = useCallback(async (id: string) => {
     updateState(prev => ({
       ...prev,
       models: prev.models.map(m => m.id === id ? { ...m, enabled: !m.enabled } : m),
-    }));
+    }), true);
   }, [updateState]);
 
   // Agents
   const addAgent = useCallback(async (a: Omit<Agent, 'id'>): Promise<Agent> => {
     const agent: Agent = { ...a, id: genId() };
-    updateState(prev => ({ ...prev, agents: [...prev.agents, agent] }));
+    updateState(prev => ({ ...prev, agents: [...prev.agents, agent] }), true);
     return agent;
   }, [updateState]);
 
@@ -201,25 +218,25 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
     updateState(prev => ({
       ...prev,
       agents: prev.agents.map(a => a.id === id ? { ...a, ...updates } : a),
-    }));
+    }), true);
   }, [updateState]);
 
   const deleteAgent = useCallback(async (id: string) => {
     if (id === 'default-assistant') return;
-    updateState(prev => ({ ...prev, agents: prev.agents.filter(a => a.id !== id) }));
+    updateState(prev => ({ ...prev, agents: prev.agents.filter(a => a.id !== id) }), true);
   }, [updateState]);
 
   const toggleAgent = useCallback(async (id: string) => {
     updateState(prev => ({
       ...prev,
       agents: prev.agents.map(a => a.id === id ? { ...a, enabled: !a.enabled } : a),
-    }));
+    }), true);
   }, [updateState]);
 
   // MCP Servers
   const addMCPServer = useCallback(async (s: Omit<MCPServer, 'id' | 'status'>): Promise<MCPServer> => {
     const server: MCPServer = { ...s, id: genId(), status: 'disconnected' };
-    updateState(prev => ({ ...prev, mcpServers: [...prev.mcpServers, server] }));
+    updateState(prev => ({ ...prev, mcpServers: [...prev.mcpServers, server] }), true);
     return server;
   }, [updateState]);
 
@@ -227,18 +244,18 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
     updateState(prev => ({
       ...prev,
       mcpServers: prev.mcpServers.map(s => s.id === id ? { ...s, ...updates } : s),
-    }));
+    }), true);
   }, [updateState]);
 
   const deleteMCPServer = useCallback(async (id: string) => {
-    updateState(prev => ({ ...prev, mcpServers: prev.mcpServers.filter(s => s.id !== id) }));
+    updateState(prev => ({ ...prev, mcpServers: prev.mcpServers.filter(s => s.id !== id) }), true);
   }, [updateState]);
 
   const toggleMCPServer = useCallback(async (id: string) => {
     updateState(prev => ({
       ...prev,
       mcpServers: prev.mcpServers.map(s => s.id === id ? { ...s, enabled: !s.enabled } : s),
-    }));
+    }), true);
   }, [updateState]);
 
   // Conversations
@@ -252,7 +269,7 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
       updatedAt: Date.now(),
       totalTokens: 0,
     };
-    updateState(prev => ({ ...prev, conversations: [conv, ...prev.conversations] }));
+    updateState(prev => ({ ...prev, conversations: [conv, ...prev.conversations] }), true);
     return conv;
   }, [updateState]);
 
@@ -264,7 +281,7 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
   }, [updateState]);
 
   const deleteConversation = useCallback(async (id: string) => {
-    updateState(prev => ({ ...prev, conversations: prev.conversations.filter(c => c.id !== id) }));
+    updateState(prev => ({ ...prev, conversations: prev.conversations.filter(c => c.id !== id) }), true);
   }, [updateState]);
 
   const addMessage = useCallback(async (conversationId: string, msg: Omit<Message, 'id'>): Promise<Message> => {
@@ -283,21 +300,48 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
     return message;
   }, [updateState]);
 
+  const deleteMessage = useCallback(async (conversationId: string, messageId: string) => {
+    updateState(prev => ({
+      ...prev,
+      conversations: prev.conversations.map(c => {
+        if (c.id !== conversationId) return c;
+        return { ...c, messages: c.messages.filter(m => m.id !== messageId), updatedAt: Date.now() };
+      }),
+    }));
+  }, [updateState]);
+
+  const deleteLastAssistantMessage = useCallback(async (conversationId: string) => {
+    updateState(prev => ({
+      ...prev,
+      conversations: prev.conversations.map(c => {
+        if (c.id !== conversationId) return c;
+        const msgs = [...c.messages];
+        for (let i = msgs.length - 1; i >= 0; i--) {
+          if (msgs[i].role === 'assistant') {
+            msgs.splice(i, 1);
+            break;
+          }
+        }
+        return { ...c, messages: msgs, updatedAt: Date.now() };
+      }),
+    }));
+  }, [updateState]);
+
   const deleteAllConversations = useCallback(async () => {
-    updateState(prev => ({ ...prev, conversations: [] }));
+    updateState(prev => ({ ...prev, conversations: [] }), true);
   }, [updateState]);
 
   // Settings
   const updateSettings = useCallback(async (updates: Partial<AppSettings>) => {
-    updateState(prev => ({ ...prev, settings: { ...prev.settings, ...updates } }));
+    updateState(prev => ({ ...prev, settings: { ...prev.settings, ...updates } }), true);
   }, [updateState]);
 
   const completeOnboarding = useCallback(async () => {
-    updateState(prev => ({ ...prev, settings: { ...prev.settings, onboardingComplete: true } }));
+    updateState(prev => ({ ...prev, settings: { ...prev.settings, onboardingComplete: true } }), true);
   }, [updateState]);
 
   const resetAllSettings = useCallback(async () => {
-    updateState(prev => ({ ...prev, settings: DEFAULT_SETTINGS }));
+    updateState(prev => ({ ...prev, settings: DEFAULT_SETTINGS }), true);
   }, [updateState]);
 
   const clearAllData = useCallback(async () => {
@@ -310,8 +354,8 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
       settings: { ...DEFAULT_SETTINGS, onboardingComplete: true },
     };
     setState(newState);
-    await persist(newState);
-  }, [persist]);
+    await persistImmediate(newState);
+  }, [persistImmediate]);
 
   // AI helpers
   const getActiveModel = useCallback((agentId: string): Model | null => {
@@ -352,104 +396,108 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
 
     let responseText = '';
 
-    try {
-      if (provider.type === 'anthropic') {
-        const res = await fetch(`${provider.baseUrl ?? 'https://api.anthropic.com'}/v1/messages`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': provider.apiKey,
-            'anthropic-version': '2023-06-01',
-          },
-          body: JSON.stringify({
-            model: model.modelId,
-            max_tokens: agent.maxTokens,
-            stream: true,
-            messages: messages.filter(m => m.role !== 'system'),
-            system: agent.systemPrompt || undefined,
-          }),
-        });
+    if (provider.type === 'anthropic') {
+      const res = await fetch(`${provider.baseUrl ?? 'https://api.anthropic.com'}/v1/messages`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': provider.apiKey,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: model.modelId,
+          max_tokens: agent.maxTokens,
+          stream: true,
+          messages: messages.filter(m => m.role !== 'system'),
+          system: agent.systemPrompt || undefined,
+        }),
+      });
 
-        if (!res.ok) {
-          const err = await res.text();
-          throw new Error(`API error ${res.status}: ${err}`);
-        }
+      if (!res.ok) {
+        const err = await res.text();
+        let friendly = `API error ${res.status}`;
+        try {
+          const parsed = JSON.parse(err);
+          friendly = parsed?.error?.message ?? friendly;
+        } catch {}
+        throw new Error(friendly);
+      }
 
-        const reader = res.body?.getReader();
-        if (!reader) throw new Error('No response body');
-        const decoder = new TextDecoder();
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error('No response body from API');
+      const decoder = new TextDecoder();
 
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          const text = decoder.decode(value, { stream: true });
-          const lines = text.split('\n');
-          for (const line of lines) {
-            if (!line.startsWith('data:')) continue;
-            const data = line.slice(5).trim();
-            if (data === '[DONE]' || !data) continue;
-            try {
-              const parsed = JSON.parse(data);
-              if (parsed.type === 'content_block_delta' && parsed.delta?.text) {
-                responseText += parsed.delta.text;
-                onChunk?.(responseText);
-              }
-            } catch {}
-          }
-        }
-      } else {
-        const baseUrl = provider.baseUrl ?? (
-          provider.type === 'gemini'
-            ? 'https://generativelanguage.googleapis.com/v1beta/openai'
-            : 'https://api.openai.com/v1'
-        );
-
-        const res = await fetch(`${baseUrl}/chat/completions`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${provider.apiKey}`,
-          },
-          body: JSON.stringify({
-            model: model.modelId,
-            messages,
-            stream: true,
-            temperature: agent.temperature,
-            max_tokens: agent.maxTokens,
-          }),
-        });
-
-        if (!res.ok) {
-          const err = await res.text();
-          throw new Error(`API error ${res.status}: ${err}`);
-        }
-
-        const reader = res.body?.getReader();
-        if (!reader) throw new Error('No response body');
-        const decoder = new TextDecoder();
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          const text = decoder.decode(value, { stream: true });
-          const lines = text.split('\n');
-          for (const line of lines) {
-            if (!line.startsWith('data:')) continue;
-            const data = line.slice(5).trim();
-            if (data === '[DONE]' || !data) continue;
-            try {
-              const parsed = JSON.parse(data);
-              const delta = parsed.choices?.[0]?.delta?.content;
-              if (delta) {
-                responseText += delta;
-                onChunk?.(responseText);
-              }
-            } catch {}
-          }
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const text = decoder.decode(value, { stream: true });
+        for (const line of text.split('\n')) {
+          if (!line.startsWith('data:')) continue;
+          const data = line.slice(5).trim();
+          if (data === '[DONE]' || !data) continue;
+          try {
+            const parsed = JSON.parse(data);
+            if (parsed.type === 'content_block_delta' && parsed.delta?.text) {
+              responseText += parsed.delta.text;
+              onChunk?.(responseText);
+            }
+          } catch {}
         }
       }
-    } catch (err) {
-      throw err;
+    } else {
+      const baseUrl = provider.baseUrl ?? (
+        provider.type === 'gemini'
+          ? 'https://generativelanguage.googleapis.com/v1beta/openai'
+          : 'https://api.openai.com/v1'
+      );
+
+      const res = await fetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${provider.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: model.modelId,
+          messages,
+          stream: true,
+          temperature: agent.temperature,
+          max_tokens: agent.maxTokens,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.text();
+        let friendly = `API error ${res.status}`;
+        try {
+          const parsed = JSON.parse(err);
+          friendly = parsed?.error?.message ?? friendly;
+        } catch {}
+        throw new Error(friendly);
+      }
+
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error('No response body from API');
+      const decoder = new TextDecoder();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const text = decoder.decode(value, { stream: true });
+        for (const line of text.split('\n')) {
+          if (!line.startsWith('data:')) continue;
+          const data = line.slice(5).trim();
+          if (data === '[DONE]' || !data) continue;
+          try {
+            const parsed = JSON.parse(data);
+            const delta = parsed.choices?.[0]?.delta?.content;
+            if (delta) {
+              responseText += delta;
+              onChunk?.(responseText);
+            }
+          } catch {}
+        }
+      }
     }
 
     if (responseText) {
@@ -469,7 +517,8 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
     addModel, updateModel, deleteModel, toggleModel,
     addAgent, updateAgent, deleteAgent, toggleAgent,
     addMCPServer, updateMCPServer, deleteMCPServer, toggleMCPServer,
-    createConversation, updateConversation, deleteConversation, addMessage, deleteAllConversations,
+    createConversation, updateConversation, deleteConversation, addMessage,
+    deleteMessage, deleteLastAssistantMessage, deleteAllConversations,
     updateSettings, completeOnboarding, resetAllSettings,
     clearAllData,
     sendMessage, getActiveModel, getActiveProvider,
@@ -479,7 +528,8 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
     addModel, updateModel, deleteModel, toggleModel,
     addAgent, updateAgent, deleteAgent, toggleAgent,
     addMCPServer, updateMCPServer, deleteMCPServer, toggleMCPServer,
-    createConversation, updateConversation, deleteConversation, addMessage, deleteAllConversations,
+    createConversation, updateConversation, deleteConversation, addMessage,
+    deleteMessage, deleteLastAssistantMessage, deleteAllConversations,
     updateSettings, completeOnboarding, resetAllSettings,
     clearAllData,
     sendMessage, getActiveModel, getActiveProvider,

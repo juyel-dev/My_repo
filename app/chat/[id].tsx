@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useRef, useMemo } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, FlatList,
-  TextInput, Platform, Alert, ActivityIndicator,
+  TextInput, Platform, Alert, ActivityIndicator, Share,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router } from 'expo-router';
@@ -10,11 +10,17 @@ import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import * as Haptics from 'expo-haptics';
 import { useApp } from '@/context/AppContext';
 import { MONO_FONT } from '@/constants/colors';
+import { AGENT_ICONS } from '@/constants/agentConfig';
 import type { Message } from '@/types';
 
-const QUICK_PROMPTS = ['// summarize', '// explain', '// translate', '// code review'];
+const QUICK_PROMPTS = ['summarize', 'explain', 'translate', 'code review'];
 
-function MessageBubble({ msg }: { msg: Message }) {
+function MessageBubble({ msg, onCopy, onRetry, isLast }: {
+  msg: Message;
+  onCopy: (text: string) => void;
+  onRetry?: () => void;
+  isLast?: boolean;
+}) {
   const isUser = msg.role === 'user';
   return (
     <View style={[styles.msgRow, isUser && styles.msgRowUser]}>
@@ -28,7 +34,9 @@ function MessageBubble({ msg }: { msg: Message }) {
           {!isUser && msg.model && (
             <Text style={styles.modelLabel}>// {msg.model}</Text>
           )}
-          <Text style={[styles.msgText, isUser && styles.msgTextUser]}>{msg.content}</Text>
+          <Text style={[styles.msgText, isUser && styles.msgTextUser]} selectable>
+            {msg.content}
+          </Text>
           {msg.mcpInfo && <Text style={styles.mcpInfo}>{msg.mcpInfo}</Text>}
           <Text style={[styles.msgTime, isUser && styles.msgTimeUser]}>
             {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -38,16 +46,18 @@ function MessageBubble({ msg }: { msg: Message }) {
           <View style={styles.msgActions}>
             <TouchableOpacity
               style={styles.msgAction}
-              onPress={() => {}}
+              onPress={() => onCopy(msg.content)}
               hitSlop={8}
             >
               <Feather name="copy" size={11} color="#525252" />
               <Text style={styles.msgActionText}>Copy</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.msgAction} onPress={() => {}} hitSlop={8}>
-              <Feather name="refresh-cw" size={11} color="#525252" />
-              <Text style={styles.msgActionText}>Retry</Text>
-            </TouchableOpacity>
+            {isLast && onRetry && (
+              <TouchableOpacity style={styles.msgAction} onPress={onRetry} hitSlop={8}>
+                <Feather name="refresh-cw" size={11} color="#525252" />
+                <Text style={styles.msgActionText}>Retry</Text>
+              </TouchableOpacity>
+            )}
           </View>
         )}
       </View>
@@ -58,10 +68,11 @@ function MessageBubble({ msg }: { msg: Message }) {
 export default function ChatScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const insets = useSafeAreaInsets();
-  const { state, addMessage, sendMessage, getActiveModel, updateConversation } = useApp();
+  const { state, addMessage, sendMessage, deleteLastAssistantMessage, getActiveModel, updateConversation } = useApp();
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
   const [streamText, setStreamText] = useState('');
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   const flatRef = useRef<FlatList>(null);
 
   const conversation = state.conversations.find(c => c.id === id);
@@ -77,10 +88,27 @@ export default function ChatScreen() {
     [conversation?.messages.length, conversation?.id],
   );
 
-  const handleSend = useCallback(async () => {
-    if (!input.trim() || streaming || !conversation) return;
-    const content = input.trim();
-    setInput('');
+  const lastAssistantIndex = useMemo(() => {
+    const msgs = conversation?.messages ?? [];
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].role === 'assistant') return i;
+    }
+    return -1;
+  }, [conversation?.messages]);
+
+  const lastUserContent = useMemo(() => {
+    const msgs = conversation?.messages ?? [];
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].role === 'user') return msgs[i].content;
+    }
+    return null;
+  }, [conversation?.messages]);
+
+  const handleSend = useCallback(async (overrideContent?: string) => {
+    const content = overrideContent ?? input.trim();
+    if (!content || streaming || !conversation) return;
+
+    if (!overrideContent) setInput('');
 
     if (!hasModel) {
       Alert.alert('No Model', 'Please add an API provider and model in Settings.', [
@@ -94,7 +122,9 @@ export default function ChatScreen() {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }
 
-    await addMessage(id, { role: 'user', content, timestamp: Date.now() });
+    if (!overrideContent) {
+      await addMessage(id, { role: 'user', content, timestamp: Date.now() });
+    }
 
     setStreaming(true);
     setStreamText('');
@@ -115,6 +145,21 @@ export default function ChatScreen() {
     }
   }, [input, streaming, conversation, hasModel, id, addMessage, sendMessage, state.settings.hapticFeedback]);
 
+  const handleRetry = useCallback(async () => {
+    if (streaming || !lastUserContent) return;
+    await deleteLastAssistantMessage(id);
+    await handleSend(lastUserContent);
+  }, [streaming, lastUserContent, deleteLastAssistantMessage, id, handleSend]);
+
+  const handleCopy = useCallback(async (text: string) => {
+    try {
+      await Share.share({ message: text });
+      if (state.settings.hapticFeedback) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      }
+    } catch {}
+  }, [state.settings.hapticFeedback]);
+
   if (!conversation) {
     return (
       <View style={styles.center}>
@@ -126,9 +171,7 @@ export default function ChatScreen() {
     );
   }
 
-  const AGENT_ICONS: Record<string, keyof typeof Feather.glyphMap> = {
-    bot: 'cpu', code: 'code', globe: 'globe', cpu: 'cpu', flask: 'zap', brain: 'activity',
-  };
+  const agentFeatherIcon = AGENT_ICONS[agent?.icon ?? 'bot'] ?? 'cpu';
 
   return (
     <KeyboardAvoidingView
@@ -141,21 +184,32 @@ export default function ChatScreen() {
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} hitSlop={8}>
           <Feather name="arrow-left" size={18} color="#a1a1a1" />
         </TouchableOpacity>
-        <TouchableOpacity style={styles.agentSelector} activeOpacity={0.7}>
+        <View style={styles.agentSelector}>
           <View style={styles.agentIconBox}>
-            <Feather name={AGENT_ICONS[agent?.icon ?? 'bot'] ?? 'cpu'} size={14} color="#8b5cf6" />
+            <Feather name={agentFeatherIcon} size={14} color="#8b5cf6" />
           </View>
           <View>
             <Text style={styles.agentName}>{agent?.name ?? 'Assistant'}</Text>
-            <Text style={styles.agentModel}>{hasModel ? getActiveModel(conversation.agentId)?.name : '// no model'}</Text>
+            <Text style={styles.agentModel}>
+              {hasModel ? getActiveModel(conversation.agentId)?.name : '// no model'}
+            </Text>
           </View>
-          <Feather name="chevron-down" size={14} color="#737373" />
-        </TouchableOpacity>
+        </View>
         <View style={styles.headerRight}>
-          <TouchableOpacity style={[styles.iconBtn, state.mcpServers.some(s => s.enabled && s.status === 'connected') && styles.iconBtnActive]} hitSlop={8}>
+          <TouchableOpacity
+            style={[styles.iconBtn, state.mcpServers.some(s => s.enabled && s.status === 'connected') && styles.iconBtnActive]}
+            hitSlop={8}
+          >
             <Feather name="server" size={15} color={state.mcpServers.some(s => s.enabled) ? '#4ade80' : '#737373'} />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.iconBtn} hitSlop={8}>
+          <TouchableOpacity
+            style={styles.iconBtn}
+            onPress={() => Alert.alert(
+              conversation.title,
+              `Agent: ${agent?.name ?? 'Unknown'}\nMessages: ${conversation.messages.length}\nTokens: ${conversation.totalTokens ?? 0}`,
+            )}
+            hitSlop={8}
+          >
             <Feather name="more-vertical" size={15} color="#737373" />
           </TouchableOpacity>
         </View>
@@ -166,7 +220,14 @@ export default function ChatScreen() {
         ref={flatRef}
         data={messages}
         keyExtractor={item => item.id}
-        renderItem={({ item }) => <MessageBubble msg={item} />}
+        renderItem={({ item, index }) => (
+          <MessageBubble
+            msg={item}
+            onCopy={handleCopy}
+            onRetry={handleRetry}
+            isLast={index === 0 && lastAssistantIndex === (conversation.messages.length - 1)}
+          />
+        )}
         inverted
         contentContainerStyle={[styles.listContent, { paddingBottom: 8 }]}
         showsVerticalScrollIndicator={false}
@@ -184,6 +245,7 @@ export default function ChatScreen() {
                 ) : (
                   <View style={styles.typingDots}>
                     <ActivityIndicator size="small" color="#8b5cf6" />
+                    <Text style={styles.typingText}>thinking...</Text>
                   </View>
                 )}
               </View>
@@ -199,12 +261,6 @@ export default function ChatScreen() {
           <Text style={styles.tokenText}>{agent?.name ?? 'Assistant'}</Text>
         </View>
         <View style={styles.inputRow}>
-          <TouchableOpacity style={styles.inputIcon} hitSlop={8}>
-            <Feather name="paperclip" size={16} color="#737373" />
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.inputIcon} hitSlop={8}>
-            <Feather name="mic" size={16} color="#737373" />
-          </TouchableOpacity>
           <TextInput
             style={styles.input}
             placeholder={`// message ${agent?.name ?? 'assistant'}...`}
@@ -212,25 +268,31 @@ export default function ChatScreen() {
             value={input}
             onChangeText={setInput}
             multiline
-            onSubmitEditing={handleSend}
+            onSubmitEditing={() => handleSend()}
+            blurOnSubmit={false}
           />
           <TouchableOpacity
             style={[styles.sendBtn, (!input.trim() || streaming) && styles.sendBtnDisabled]}
-            onPress={handleSend}
+            onPress={() => handleSend()}
             disabled={!input.trim() || streaming}
             activeOpacity={0.8}
           >
-            <Feather name="arrow-up" size={16} color="#fff" />
+            {streaming ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Feather name="arrow-up" size={16} color="#fff" />
+            )}
           </TouchableOpacity>
         </View>
         <View style={styles.quickPromptsRow}>
           {QUICK_PROMPTS.map(p => (
             <TouchableOpacity
-              key={p} style={styles.quickChip}
-              onPress={() => setInput(p.replace('// ', ''))}
+              key={p}
+              style={styles.quickChip}
+              onPress={() => setInput(p)}
               activeOpacity={0.7}
             >
-              <Text style={styles.quickChipText}>{p}</Text>
+              <Text style={styles.quickChipText}>// {p}</Text>
             </TouchableOpacity>
           ))}
         </View>
@@ -297,18 +359,19 @@ const styles = StyleSheet.create({
     borderBottomLeftRadius: 4, alignSelf: 'flex-start',
   },
   modelLabel: { fontFamily: MONO_FONT, color: '#8b5cf6', fontSize: 9, letterSpacing: 1, marginBottom: 4 },
-  msgText: { fontFamily: MONO_FONT, color: '#e5e5e5', fontSize: 13, lineHeight: 19 },
+  msgText: { fontFamily: MONO_FONT, color: '#e5e5e5', fontSize: 13, lineHeight: 20 },
   msgTextUser: { color: '#f5f5f5' },
   mcpInfo: { fontFamily: MONO_FONT, color: '#737373', fontSize: 9, marginTop: 4 },
   msgTime: { fontFamily: MONO_FONT, color: '#525252', fontSize: 9, textAlign: 'right', marginTop: 4 },
   msgTimeUser: { textAlign: 'right' },
   msgActions: { flexDirection: 'row', gap: 12, paddingLeft: 4 },
-  msgAction: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  msgAction: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 2 },
   msgActionText: { fontFamily: MONO_FONT, color: '#525252', fontSize: 10 },
   streamingRow: {
     flexDirection: 'row', alignItems: 'flex-end', gap: 8, marginBottom: 16,
   },
-  typingDots: { paddingHorizontal: 4, paddingVertical: 4 },
+  typingDots: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 4 },
+  typingText: { fontFamily: MONO_FONT, color: '#525252', fontSize: 10 },
   inputArea: {
     borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.08)',
     backgroundColor: '#0d0d0d', paddingTop: 8, paddingHorizontal: 12, gap: 8,
@@ -316,19 +379,19 @@ const styles = StyleSheet.create({
   tokenBar: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 4 },
   tokenText: { fontFamily: MONO_FONT, color: '#404040', fontSize: 9 },
   inputRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
+    flexDirection: 'row', alignItems: 'flex-end', gap: 8,
     backgroundColor: '#171717', borderRadius: 14,
     borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
-    paddingHorizontal: 10, paddingVertical: 8,
+    paddingHorizontal: 12, paddingVertical: 8,
   },
-  inputIcon: { padding: 4 },
   input: {
     flex: 1, fontFamily: MONO_FONT, color: '#f5f5f5', fontSize: 13,
-    maxHeight: 100, minHeight: 20,
+    maxHeight: 120, minHeight: 20, lineHeight: 20,
   },
   sendBtn: {
     width: 32, height: 32, borderRadius: 10,
     backgroundColor: '#8b5cf6', justifyContent: 'center', alignItems: 'center',
+    marginBottom: 0,
   },
   sendBtnDisabled: { opacity: 0.4 },
   quickPromptsRow: { flexDirection: 'row', gap: 6, paddingBottom: 4 },

@@ -67,14 +67,14 @@ export default function SettingsScreen() {
             <SettingsItem
               icon="globe"
               label="API Providers"
-              badge={enabledProviders || undefined}
+              badge={enabledProviders > 0 ? enabledProviders : undefined}
               onPress={() => router.push('/settings/providers/')}
             />
             <View style={styles.rowSep} />
             <SettingsItem
               icon="cpu"
               label="Models"
-              badge={enabledModels || undefined}
+              badge={enabledModels > 0 ? enabledModels : undefined}
               onPress={() => router.push('/settings/models')}
             />
           </View>
@@ -106,7 +106,7 @@ export default function SettingsScreen() {
           <Text style={styles.sectionLabel}>{'// PERSONALIZATION'}</Text>
           <View style={styles.card}>
             <SettingsItem
-              icon="brain"
+              icon="sliders"
               label="Memory & Personalization"
               onPress={() => router.push('/settings/memory')}
             />

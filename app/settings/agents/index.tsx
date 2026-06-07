@@ -7,17 +7,8 @@ import { router } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { useApp } from '@/context/AppContext';
 import { MONO_FONT } from '@/constants/colors';
+import { AGENT_ICONS, CAP_ICONS, CAP_COLORS, CAP_LABELS } from '@/constants/agentConfig';
 import type { Capability } from '@/types';
-
-const AGENT_ICONS: Record<string, keyof typeof Feather.glyphMap> = {
-  bot: 'cpu', code: 'code', globe: 'globe', cpu: 'cpu', flask: 'zap', brain: 'activity',
-};
-const CAP_ICONS: Record<Capability, keyof typeof Feather.glyphMap> = {
-  tools: 'tool', memory: 'database', vision: 'eye', mcp: 'server', reasoning: 'activity',
-};
-const CAP_COLORS: Record<Capability, string> = {
-  tools: '#8b5cf6', memory: '#3b82f6', vision: '#fbbf24', mcp: '#4ade80', reasoning: '#f97316',
-};
 
 export default function AgentsScreen() {
   const insets = useSafeAreaInsets();
@@ -25,15 +16,14 @@ export default function AgentsScreen() {
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
 
   const handleDelete = (id: string, name: string) => {
-    if (id === 'default-assistant') { Alert.alert('Cannot Delete', 'The default assistant cannot be deleted.'); return; }
+    if (id === 'default-assistant') {
+      Alert.alert('Cannot Delete', 'The default assistant cannot be deleted.');
+      return;
+    }
     Alert.alert('Delete Agent', `Remove "${name}"?`, [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Delete', style: 'destructive', onPress: () => deleteAgent(id) },
     ]);
-  };
-
-  const createDefaultAgent = () => {
-    router.push('/settings/agents/new');
   };
 
   return (
@@ -43,7 +33,7 @@ export default function AgentsScreen() {
           <Feather name="arrow-left" size={18} color="#a1a1a1" />
         </TouchableOpacity>
         <Text style={styles.title}>Agent Settings</Text>
-        <TouchableOpacity onPress={createDefaultAgent} style={styles.addBtn} activeOpacity={0.8}>
+        <TouchableOpacity onPress={() => router.push('/settings/agents/new')} style={styles.addBtn} activeOpacity={0.8}>
           <Feather name="plus" size={16} color="#fff" />
         </TouchableOpacity>
       </View>
@@ -77,13 +67,15 @@ export default function AgentsScreen() {
                     <Text style={styles.agentModel}>{model?.name ?? '// no model'}</Text>
                   </View>
                 </View>
-                <Text style={styles.agentDesc} numberOfLines={1}>{agent.description || '// no description'}</Text>
+                {agent.description ? (
+                  <Text style={styles.agentDesc} numberOfLines={1}>{agent.description}</Text>
+                ) : null}
                 <View style={styles.capRow}>
                   {agent.capabilities.map(cap => (
-                    <View key={cap} style={[styles.capBadge, { backgroundColor: `${CAP_COLORS[cap]}20` }]}>
-                      <Feather name={CAP_ICONS[cap]} size={9} color={CAP_COLORS[cap]} />
-                      <Text style={[styles.capText, { color: CAP_COLORS[cap] }]}>
-                        {cap.charAt(0).toUpperCase() + cap.slice(1)}
+                    <View key={cap} style={[styles.capBadge, { backgroundColor: `${CAP_COLORS[cap as Capability]}20` }]}>
+                      <Feather name={CAP_ICONS[cap as Capability]} size={9} color={CAP_COLORS[cap as Capability]} />
+                      <Text style={[styles.capText, { color: CAP_COLORS[cap as Capability] }]}>
+                        {CAP_LABELS[cap as Capability]}
                       </Text>
                     </View>
                   ))}
@@ -93,8 +85,11 @@ export default function AgentsScreen() {
           );
         })}
 
-        {/* Add new */}
-        <TouchableOpacity style={styles.addMoreBtn} onPress={createDefaultAgent} activeOpacity={0.8}>
+        <TouchableOpacity
+          style={styles.addMoreBtn}
+          onPress={() => router.push('/settings/agents/new')}
+          activeOpacity={0.8}
+        >
           <Feather name="plus" size={14} color="#8b5cf6" />
           <Text style={styles.addMoreText}>Create New Agent</Text>
         </TouchableOpacity>

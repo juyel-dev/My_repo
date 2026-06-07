@@ -18,19 +18,37 @@ import { AppContextProvider } from "@/context/AppContext";
 
 SplashScreen.preventAutoHideAsync();
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 1000 * 60 * 5,
+      gcTime: 1000 * 60 * 10,
+      retry: (failureCount, error) => {
+        if (error instanceof Error && error.message.includes('401')) return false;
+        if (error instanceof Error && error.message.includes('403')) return false;
+        return failureCount < 2;
+      },
+      retryDelay: attemptIndex => Math.min(1000 * 2 ** attemptIndex, 10000),
+      refetchOnWindowFocus: false,
+    },
+    mutations: {
+      retry: 0,
+    },
+  },
+});
 
 const screenOptions = {
   headerShown: false,
   contentStyle: { backgroundColor: '#0d0d0d' },
+  animation: 'slide_from_right',
 } as const;
 
 function RootLayoutNav() {
   return (
     <Stack screenOptions={screenOptions}>
       <Stack.Screen name="index" />
-      <Stack.Screen name="(onboarding)" />
-      <Stack.Screen name="(tabs)" />
+      <Stack.Screen name="(onboarding)" options={{ animation: 'fade' }} />
+      <Stack.Screen name="(tabs)" options={{ animation: 'fade' }} />
       <Stack.Screen name="chat/[id]" />
       <Stack.Screen name="settings/providers/index" />
       <Stack.Screen name="settings/providers/[id]" />

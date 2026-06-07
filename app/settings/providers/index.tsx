@@ -7,11 +7,7 @@ import { router } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { useApp } from '@/context/AppContext';
 import { MONO_FONT } from '@/constants/colors';
-import type { ProviderType } from '@/types';
-
-const PROVIDER_ICONS: Record<ProviderType, keyof typeof Feather.glyphMap> = {
-  openai: 'zap', anthropic: 'sun', gemini: 'star', custom: 'settings',
-};
+import { PROVIDER_ICONS } from '@/constants/agentConfig';
 
 export default function ProvidersScreen() {
   const insets = useSafeAreaInsets();
@@ -42,7 +38,9 @@ export default function ProvidersScreen() {
 
         {state.providers.length === 0 ? (
           <View style={styles.empty}>
-            <Feather name="globe" size={28} color="#404040" />
+            <View style={styles.emptyIcon}>
+              <Feather name="globe" size={28} color="#404040" />
+            </View>
             <Text style={styles.emptyTitle}>No providers yet</Text>
             <Text style={styles.emptyDesc}>{'// Add an API provider to start chatting'}</Text>
             <TouchableOpacity style={styles.addFirstBtn} onPress={() => router.push('/settings/providers/add')} activeOpacity={0.8}>
@@ -54,6 +52,7 @@ export default function ProvidersScreen() {
           <View style={styles.list}>
             {state.providers.map(p => {
               const modelCount = state.models.filter(m => m.providerId === p.id).length;
+              const enabledCount = state.models.filter(m => m.providerId === p.id && m.enabled).length;
               return (
                 <View key={p.id} style={[styles.card, !p.enabled && styles.cardDisabled]}>
                   <View style={styles.cardLeft}>
@@ -68,7 +67,7 @@ export default function ProvidersScreen() {
                           {p.enabled ? 'Active' : 'Disabled'}
                         </Text>
                       </View>
-                      <Text style={styles.provMeta}>{p.type} · {modelCount} models</Text>
+                      <Text style={styles.provMeta}>{p.type} · {enabledCount}/{modelCount} models</Text>
                       <Text style={styles.provKey} numberOfLines={1}>
                         {p.apiKey.slice(0, 8)}{'•'.repeat(12)}
                       </Text>
@@ -76,7 +75,7 @@ export default function ProvidersScreen() {
                   </View>
                   <View style={styles.cardActions}>
                     <TouchableOpacity
-                      style={[styles.toggleBtn, p.enabled && styles.toggleBtnOn]}
+                      style={styles.toggleBtn}
                       onPress={() => toggleProvider(p.id)}
                       hitSlop={8}
                     >
@@ -128,6 +127,11 @@ const styles = StyleSheet.create({
   content: { padding: 16, gap: 16, paddingBottom: 32 },
   sectionLabel: { fontFamily: MONO_FONT, color: '#8b5cf6', fontSize: 10, letterSpacing: 2 },
   empty: { alignItems: 'center', gap: 10, paddingVertical: 48 },
+  emptyIcon: {
+    width: 64, height: 64, borderRadius: 20,
+    backgroundColor: '#171717', justifyContent: 'center', alignItems: 'center',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)',
+  },
   emptyTitle: { fontFamily: MONO_FONT, color: '#a1a1a1', fontSize: 15, fontWeight: '600' },
   emptyDesc: { fontFamily: MONO_FONT, color: '#525252', fontSize: 11 },
   addFirstBtn: {
@@ -165,7 +169,6 @@ const styles = StyleSheet.create({
   provKey: { fontFamily: MONO_FONT, color: '#404040', fontSize: 10 },
   cardActions: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   toggleBtn: { padding: 4 },
-  toggleBtnOn: {},
   editBtn: { padding: 4 },
   addMoreBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 8, justifyContent: 'center',

@@ -7,20 +7,19 @@ import { useLocalSearchParams, router } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { useApp } from '@/context/AppContext';
 import { MONO_FONT } from '@/constants/colors';
+import { CAP_ICONS, CAP_COLORS, CAP_LABELS } from '@/constants/agentConfig';
 import type { AgentIcon, Capability } from '@/types';
 
 const ICONS: { key: AgentIcon; icon: keyof typeof Feather.glyphMap }[] = [
-  { key: 'bot', icon: 'cpu' }, { key: 'code', icon: 'code' }, { key: 'globe', icon: 'globe' },
-  { key: 'cpu', icon: 'zap' }, { key: 'flask', icon: 'activity' }, { key: 'brain', icon: 'eye' },
+  { key: 'bot', icon: 'cpu' },
+  { key: 'code', icon: 'code' },
+  { key: 'globe', icon: 'globe' },
+  { key: 'cpu', icon: 'zap' },
+  { key: 'flask', icon: 'activity' },
+  { key: 'brain', icon: 'eye' },
 ];
 
-const CAPS: { key: Capability; icon: keyof typeof Feather.glyphMap; label: string; color: string }[] = [
-  { key: 'tools', icon: 'tool', label: 'Tools', color: '#8b5cf6' },
-  { key: 'memory', icon: 'database', label: 'Memory', color: '#3b82f6' },
-  { key: 'vision', icon: 'eye', label: 'Vision', color: '#fbbf24' },
-  { key: 'mcp', icon: 'server', label: 'MCP', color: '#4ade80' },
-  { key: 'reasoning', icon: 'activity', label: 'Reasoning', color: '#f97316' },
-];
+const CAPS: Capability[] = ['tools', 'memory', 'vision', 'mcp', 'reasoning'];
 
 const DEFAULT_NEW_AGENT = {
   name: '',
@@ -29,7 +28,7 @@ const DEFAULT_NEW_AGENT = {
   modelId: '',
   systemPrompt: 'You are a helpful AI assistant.',
   capabilities: ['tools', 'memory'] as Capability[],
-  mcpServerIds: [],
+  mcpServerIds: [] as string[],
   temperature: 0.7,
   maxTokens: 4096,
   enabled: true,
@@ -65,12 +64,18 @@ export default function AgentEditScreen() {
     if (!name.trim()) { Alert.alert('Error', 'Agent name is required.'); return; }
     setSaving(true);
     try {
+      const temp = parseFloat(temperature);
+      const tokens = parseInt(maxTokens);
       const data = {
-        name: name.trim(), description: desc.trim(), icon, modelId,
-        systemPrompt: systemPrompt.trim(), capabilities: caps,
+        name: name.trim(),
+        description: desc.trim(),
+        icon,
+        modelId,
+        systemPrompt: systemPrompt.trim(),
+        capabilities: caps,
         mcpServerIds: existing?.mcpServerIds ?? [],
-        temperature: parseFloat(temperature) || 0.7,
-        maxTokens: parseInt(maxTokens) || 4096,
+        temperature: isNaN(temp) ? 0.7 : Math.max(0, Math.min(2, temp)),
+        maxTokens: isNaN(tokens) ? 4096 : Math.max(256, tokens),
         enabled: existing?.enabled ?? true,
       };
       if (isNew) {
@@ -154,7 +159,12 @@ export default function AgentEditScreen() {
         <View style={styles.card}>
           <Text style={styles.cardLabel}>{'// MODEL'}</Text>
           {enabledModels.length === 0 ? (
-            <Text style={styles.noModels}>// No models enabled. Add a provider first.</Text>
+            <View style={styles.noModelRow}>
+              <Text style={styles.noModels}>// No models enabled.</Text>
+              <TouchableOpacity onPress={() => router.push('/settings/providers/')}>
+                <Text style={styles.noModelsLink}>Add a provider →</Text>
+              </TouchableOpacity>
+            </View>
           ) : (
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.modelScroll}>
               {enabledModels.map(m => {
@@ -179,16 +189,21 @@ export default function AgentEditScreen() {
         <View style={styles.card}>
           <Text style={styles.cardLabel}>{'// CAPABILITIES'}</Text>
           <View style={styles.capsGrid}>
-            {CAPS.map(c => (
+            {CAPS.map(cap => (
               <TouchableOpacity
-                key={c.key}
-                style={[styles.capOption, caps.includes(c.key) && { backgroundColor: `${c.color}20`, borderColor: `${c.color}60` }]}
-                onPress={() => toggleCap(c.key)}
+                key={cap}
+                style={[
+                  styles.capOption,
+                  caps.includes(cap) && { backgroundColor: `${CAP_COLORS[cap]}20`, borderColor: `${CAP_COLORS[cap]}60` },
+                ]}
+                onPress={() => toggleCap(cap)}
                 activeOpacity={0.7}
               >
-                <Feather name={c.icon} size={12} color={caps.includes(c.key) ? c.color : '#737373'} />
-                <Text style={[styles.capOptionText, caps.includes(c.key) && { color: c.color }]}>{c.label}</Text>
-                {caps.includes(c.key) && <Feather name="check" size={10} color={c.color} />}
+                <Feather name={CAP_ICONS[cap]} size={12} color={caps.includes(cap) ? CAP_COLORS[cap] : '#737373'} />
+                <Text style={[styles.capOptionText, caps.includes(cap) && { color: CAP_COLORS[cap] }]}>
+                  {CAP_LABELS[cap]}
+                </Text>
+                {caps.includes(cap) && <Feather name="check" size={10} color={CAP_COLORS[cap]} />}
               </TouchableOpacity>
             ))}
           </View>
@@ -214,7 +229,10 @@ export default function AgentEditScreen() {
         <View style={styles.card}>
           <Text style={styles.cardLabel}>{'// PARAMETERS'}</Text>
           <View style={styles.paramRow}>
-            <Text style={styles.paramLabel}>Temperature</Text>
+            <View style={styles.paramLeft}>
+              <Text style={styles.paramLabel}>Temperature</Text>
+              <Text style={styles.paramHint}>// creativity 0.0 – 2.0</Text>
+            </View>
             <View style={styles.paramInput}>
               <TextInput
                 style={styles.paramValue}
@@ -226,7 +244,10 @@ export default function AgentEditScreen() {
           </View>
           <View style={styles.divider} />
           <View style={styles.paramRow}>
-            <Text style={styles.paramLabel}>Max Tokens</Text>
+            <View style={styles.paramLeft}>
+              <Text style={styles.paramLabel}>Max Tokens</Text>
+              <Text style={styles.paramHint}>// response length limit</Text>
+            </View>
             <View style={styles.paramInput}>
               <TextInput
                 style={styles.paramValue}
@@ -285,7 +306,9 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)', paddingHorizontal: 12, paddingVertical: 10,
   },
   input: { fontFamily: MONO_FONT, color: '#f5f5f5', fontSize: 13 },
+  noModelRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   noModels: { fontFamily: MONO_FONT, color: '#525252', fontSize: 11 },
+  noModelsLink: { fontFamily: MONO_FONT, color: '#8b5cf6', fontSize: 11 },
   modelScroll: { marginHorizontal: -4 },
   modelChip: {
     paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, marginHorizontal: 4,
@@ -309,7 +332,9 @@ const styles = StyleSheet.create({
   },
   promptInput: { fontFamily: MONO_FONT, color: '#f5f5f5', fontSize: 12, lineHeight: 18, minHeight: 80 },
   paramRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  paramLeft: { flex: 1, gap: 2 },
   paramLabel: { fontFamily: MONO_FONT, color: '#a1a1a1', fontSize: 13 },
+  paramHint: { fontFamily: MONO_FONT, color: '#525252', fontSize: 9 },
   paramInput: {
     backgroundColor: '#0d0d0d', borderRadius: 8,
     borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)', paddingHorizontal: 12, paddingVertical: 6,

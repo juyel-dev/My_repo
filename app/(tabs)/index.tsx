@@ -8,11 +8,8 @@ import { router } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { useApp } from '@/context/AppContext';
 import { MONO_FONT } from '@/constants/colors';
+import { AGENT_ICONS } from '@/constants/agentConfig';
 import type { Conversation } from '@/types';
-
-const AGENT_ICONS: Record<string, keyof typeof Feather.glyphMap> = {
-  bot: 'cpu', code: 'code', globe: 'globe', cpu: 'cpu', flask: 'zap', brain: 'activity',
-};
 
 function timeLabel(ts: number): string {
   const now = Date.now();
@@ -25,8 +22,11 @@ function timeLabel(ts: number): string {
 }
 
 function ConvItem({ conv, agentName, agentIcon, onPress, onDelete }: {
-  conv: Conversation; agentName: string; agentIcon: keyof typeof Feather.glyphMap;
-  onPress: () => void; onDelete: () => void;
+  conv: Conversation;
+  agentName: string;
+  agentIcon: keyof typeof Feather.glyphMap;
+  onPress: () => void;
+  onDelete: () => void;
 }) {
   const lastMsg = conv.messages[conv.messages.length - 1];
   return (
@@ -62,7 +62,7 @@ export default function ChatsScreen() {
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const bottomPad = Platform.OS === 'web' ? 34 + 84 : insets.bottom + 50;
 
-  const enabledAgents = state.agents.filter(a => a.enabled);
+  const enabledAgents = useMemo(() => state.agents.filter(a => a.enabled), [state.agents]);
 
   const filteredConvs = useMemo(() => {
     let list = [...state.conversations].sort((a, b) => {
@@ -88,8 +88,10 @@ export default function ChatsScreen() {
     ]);
   }, [deleteConversation]);
 
-  const getAgent = useCallback((agentId: string) => {
-    return state.agents.find(a => a.id === agentId);
+  const agentMap = useMemo(() => {
+    const map = new Map<string, typeof state.agents[0]>();
+    state.agents.forEach(a => map.set(a.id, a));
+    return map;
   }, [state.agents]);
 
   return (
@@ -116,7 +118,9 @@ export default function ChatsScreen() {
             <View style={styles.headerLeft}>
               <Feather name="message-circle" size={14} color="#8b5cf6" />
               <Text style={styles.headerTitle}>Chats</Text>
-              <Text style={styles.headerCount}>{state.conversations.length}</Text>
+              {state.conversations.length > 0 && (
+                <Text style={styles.headerCount}>{state.conversations.length}</Text>
+              )}
             </View>
             <View style={styles.headerRight}>
               <TouchableOpacity onPress={() => setShowSearch(true)} style={styles.iconBtn} hitSlop={8}>
@@ -145,8 +149,14 @@ export default function ChatsScreen() {
               style={[styles.agentChip, selectedAgent === a.id && styles.agentChipActive]}
               onPress={() => setSelectedAgent(selectedAgent === a.id ? null : a.id)}
             >
-              <Feather name={AGENT_ICONS[a.icon] ?? 'cpu'} size={10} color={selectedAgent === a.id ? '#8b5cf6' : '#737373'} />
-              <Text style={[styles.agentChipText, selectedAgent === a.id && styles.agentChipTextActive]}>{a.name}</Text>
+              <Feather
+                name={AGENT_ICONS[a.icon] ?? 'cpu'}
+                size={10}
+                color={selectedAgent === a.id ? '#8b5cf6' : '#737373'}
+              />
+              <Text style={[styles.agentChipText, selectedAgent === a.id && styles.agentChipTextActive]}>
+                {a.name}
+              </Text>
             </TouchableOpacity>
           ))}
         </View>
@@ -158,19 +168,25 @@ export default function ChatsScreen() {
           <View style={styles.emptyIcon}>
             <Feather name="message-circle" size={28} color="#404040" />
           </View>
-          <Text style={styles.emptyTitle}>No chats yet</Text>
-          <Text style={styles.emptyDesc}>{'// Start a conversation with an AI agent'}</Text>
-          <TouchableOpacity style={styles.emptyBtn} onPress={handleNewChat} activeOpacity={0.8}>
-            <Feather name="plus" size={14} color="#8b5cf6" />
-            <Text style={styles.emptyBtnText}>New Chat</Text>
-          </TouchableOpacity>
+          <Text style={styles.emptyTitle}>
+            {search ? 'No results' : 'No chats yet'}
+          </Text>
+          <Text style={styles.emptyDesc}>
+            {search ? `// no chats matching "${search}"` : '// Start a conversation with an AI agent'}
+          </Text>
+          {!search && (
+            <TouchableOpacity style={styles.emptyBtn} onPress={handleNewChat} activeOpacity={0.8}>
+              <Feather name="plus" size={14} color="#8b5cf6" />
+              <Text style={styles.emptyBtnText}>New Chat</Text>
+            </TouchableOpacity>
+          )}
         </View>
       ) : (
         <FlatList
           data={filteredConvs}
           keyExtractor={item => item.id}
           renderItem={({ item }) => {
-            const agent = getAgent(item.agentId);
+            const agent = agentMap.get(item.agentId);
             return (
               <ConvItem
                 conv={item}

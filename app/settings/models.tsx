@@ -7,15 +7,8 @@ import { router } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { useApp } from '@/context/AppContext';
 import { MONO_FONT } from '@/constants/colors';
+import { CAP_ICONS, CAP_COLORS } from '@/constants/agentConfig';
 import type { Capability } from '@/types';
-
-const CAP_ICONS: Record<Capability, keyof typeof Feather.glyphMap> = {
-  tools: 'tool', memory: 'database', vision: 'eye', mcp: 'server', reasoning: 'activity',
-};
-
-const CAP_COLORS: Record<Capability, string> = {
-  tools: '#8b5cf6', memory: '#3b82f6', vision: '#fbbf24', mcp: '#4ade80', reasoning: '#f97316',
-};
 
 export default function ModelsScreen() {
   const insets = useSafeAreaInsets();
@@ -74,8 +67,8 @@ export default function ModelsScreen() {
                           <View style={styles.metaRow}>
                             <View style={styles.caps}>
                               {m.capabilities.map(cap => (
-                                <View key={cap} style={[styles.capBadge, { backgroundColor: `${CAP_COLORS[cap]}20` }]}>
-                                  <Feather name={CAP_ICONS[cap]} size={9} color={CAP_COLORS[cap]} />
+                                <View key={cap} style={[styles.capBadge, { backgroundColor: `${CAP_COLORS[cap as Capability]}20` }]}>
+                                  <Feather name={CAP_ICONS[cap as Capability]} size={9} color={CAP_COLORS[cap as Capability]} />
                                 </View>
                               ))}
                             </View>

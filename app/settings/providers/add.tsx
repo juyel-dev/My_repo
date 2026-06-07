@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, ScrollView, TextInput, Platform, Alert,
+  View, Text, TouchableOpacity, StyleSheet, ScrollView, TextInput, Platform, Alert, ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -18,6 +18,35 @@ const PROVIDERS: { type: ProviderType; name: string; placeholder: string; defaul
 
 const API_TYPES = ['OpenAI Compatible', 'Anthropic', 'Google Gemini', 'Ollama (Local)', 'Custom / Raw HTTP'];
 
+async function testEndpoint(baseUrl: string, apiKey: string, type: ProviderType): Promise<{ ok: boolean; message: string }> {
+  try {
+    const url = type === 'anthropic'
+      ? `${baseUrl}/v1/models`
+      : `${baseUrl}/models`;
+
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (type === 'anthropic') {
+      headers['x-api-key'] = apiKey;
+      headers['anthropic-version'] = '2023-06-01';
+    } else {
+      headers['Authorization'] = `Bearer ${apiKey}`;
+    }
+
+    const res = await fetch(url, { method: 'GET', headers });
+
+    if (res.ok) return { ok: true, message: `Connected (${res.status})` };
+    if (res.status === 401) return { ok: false, message: 'Invalid API key (401)' };
+    if (res.status === 403) return { ok: false, message: 'Forbidden — check key permissions (403)' };
+    return { ok: false, message: `Server responded with ${res.status}` };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes('Network') || msg.includes('fetch')) {
+      return { ok: false, message: 'Cannot reach endpoint — check URL and network' };
+    }
+    return { ok: false, message: msg };
+  }
+}
+
 export default function AddProviderScreen() {
   const insets = useSafeAreaInsets();
   const { addProvider } = useApp();
@@ -29,11 +58,14 @@ export default function AddProviderScreen() {
   const [baseUrl, setBaseUrl] = useState('');
   const [showKey, setShowKey] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [enabled, setEnabled] = useState(true);
   const [showTypeMenu, setShowTypeMenu] = useState(false);
   const [apiType, setApiType] = useState('OpenAI Compatible');
 
   const selectedProvider = PROVIDERS.find(p => p.type === type)!;
+  const effectiveUrl = baseUrl.trim() || selectedProvider.defaultUrl;
 
   const handleSave = async () => {
     if (!name.trim()) { Alert.alert('Error', 'Please enter a provider name.'); return; }
@@ -43,7 +75,7 @@ export default function AddProviderScreen() {
         name: name.trim(),
         type,
         apiKey: apiKey.trim(),
-        baseUrl: baseUrl.trim() || selectedProvider.defaultUrl,
+        baseUrl: effectiveUrl,
         enabled,
       });
       router.back();
@@ -51,6 +83,19 @@ export default function AddProviderScreen() {
       Alert.alert('Error', String(e));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleTest = async () => {
+    setTesting(true);
+    setTestResult(null);
+    const result = await testEndpoint(effectiveUrl, apiKey.trim(), type);
+    setTestResult(result);
+    setTesting(false);
+    if (result.ok) {
+      Alert.alert('Connection Successful', result.message);
+    } else {
+      Alert.alert('Connection Failed', result.message);
     }
   };
 
@@ -154,7 +199,7 @@ export default function AddProviderScreen() {
               placeholder={selectedProvider.placeholder}
               placeholderTextColor="#525252"
               value={apiKey}
-              onChangeText={setApiKey}
+              onChangeText={(v) => { setApiKey(v); setTestResult(null); }}
               secureTextEntry={!showKey}
               autoCapitalize="none"
               autoCorrect={false}
@@ -166,14 +211,42 @@ export default function AddProviderScreen() {
           <Text style={styles.hint}>// stored securely on-device only</Text>
         </View>
 
+        {/* Test result indicator */}
+        {testResult && (
+          <View style={[styles.testResultCard, testResult.ok ? styles.testResultOk : styles.testResultFail]}>
+            <Feather name={testResult.ok ? 'check-circle' : 'x-circle'} size={13} color={testResult.ok ? '#4ade80' : '#ef4444'} />
+            <Text style={[styles.testResultText, { color: testResult.ok ? '#4ade80' : '#ef4444' }]}>
+              {testResult.message}
+            </Text>
+          </View>
+        )}
+
         {/* Actions */}
         <View style={styles.actions}>
-          <TouchableOpacity style={styles.testBtn} activeOpacity={0.8}>
-            <Feather name="zap" size={14} color="#737373" />
-            <Text style={styles.testBtnText}>Test Endpoint</Text>
+          <TouchableOpacity
+            style={[styles.testBtn, testing && styles.btnDisabled]}
+            activeOpacity={0.8}
+            onPress={handleTest}
+            disabled={testing}
+          >
+            {testing ? (
+              <ActivityIndicator size="small" color="#737373" />
+            ) : (
+              <Feather name="zap" size={14} color="#737373" />
+            )}
+            <Text style={styles.testBtnText}>{testing ? 'Testing...' : 'Test Endpoint'}</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.saveBtn, saving && styles.saveBtnDisabled]} onPress={handleSave} disabled={saving} activeOpacity={0.8}>
-            <Feather name="check" size={14} color="#fff" />
+          <TouchableOpacity
+            style={[styles.saveBtn, saving && styles.btnDisabled]}
+            onPress={handleSave}
+            disabled={saving}
+            activeOpacity={0.8}
+          >
+            {saving ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Feather name="check" size={14} color="#fff" />
+            )}
             <Text style={styles.saveBtnText}>{saving ? 'Saving...' : 'Save Provider'}</Text>
           </TouchableOpacity>
         </View>
@@ -199,7 +272,7 @@ const styles = StyleSheet.create({
   sectionLabel: { fontFamily: MONO_FONT, color: '#8b5cf6', fontSize: 10, letterSpacing: 2 },
   card: { backgroundColor: '#171717', borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)', overflow: 'hidden' },
   row: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 12 },
-  rowLabel: { flex: 1, fontFamily: MONO_FONT, color: '#a1a1a1', fontSize: 13, textTransform: 'uppercase', letterSpacing: 0.5, fontSize: 11 },
+  rowLabel: { flex: 1, fontFamily: MONO_FONT, color: '#a1a1a1', fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5 },
   divider: { height: 1, backgroundColor: 'rgba(255,255,255,0.06)' },
   fieldRow: { paddingHorizontal: 14, paddingVertical: 10, gap: 8 },
   fieldLabel: { fontFamily: MONO_FONT, color: '#737373', fontSize: 10, textTransform: 'uppercase', letterSpacing: 1 },
@@ -226,6 +299,14 @@ const styles = StyleSheet.create({
   typeDotInactive: { backgroundColor: '#404040' },
   typeText: { fontFamily: MONO_FONT, color: '#737373', fontSize: 12 },
   typeTextActive: { color: '#f5f5f5' },
+  testResultCard: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10,
+    borderWidth: 1,
+  },
+  testResultOk: { backgroundColor: 'rgba(74,222,128,0.06)', borderColor: 'rgba(74,222,128,0.2)' },
+  testResultFail: { backgroundColor: 'rgba(239,68,68,0.06)', borderColor: 'rgba(239,68,68,0.2)' },
+  testResultText: { fontFamily: MONO_FONT, fontSize: 11, flex: 1 },
   actions: { flexDirection: 'row', gap: 10 },
   testBtn: {
     flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
@@ -237,6 +318,6 @@ const styles = StyleSheet.create({
     flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
     paddingVertical: 12, borderRadius: 12, backgroundColor: '#8b5cf6',
   },
-  saveBtnDisabled: { opacity: 0.5 },
+  btnDisabled: { opacity: 0.5 },
   saveBtnText: { fontFamily: MONO_FONT, color: '#fff', fontSize: 12, fontWeight: '700' },
 });
